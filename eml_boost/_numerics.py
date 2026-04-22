@@ -27,5 +27,11 @@ def eml(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 
 def is_real_valued(z: torch.Tensor, tol: float = _REAL_TOL) -> bool:
-    """Check whether a complex tensor is real-valued within tolerance."""
+    """Check whether a tensor is real-valued within tolerance.
+
+    Real-dtype tensors are trivially real-valued. Complex-dtype tensors
+    are real-valued iff their imaginary part's magnitude is below `tol`.
+    """
+    if not z.is_complex():
+        return True
     return bool((z.imag.abs() < tol).all().item())

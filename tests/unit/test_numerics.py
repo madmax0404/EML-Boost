@@ -19,6 +19,9 @@ class TestSafeExp:
     def test_clamps_large_negative(self):
         result = safe_exp(torch.tensor(-1000.0, dtype=torch.complex128))
         assert torch.isfinite(result).all()
+        # If clamp engages, result == exp(-50) != 0. Without clamp, underflows to 0.
+        assert result.real.item() > 0.0
+        assert result.real.item() > torch.exp(torch.tensor(-51.0, dtype=torch.float64)).item()
 
     def test_preserves_imaginary(self):
         z = torch.tensor(1.0 + 2.0j, dtype=torch.complex128)
@@ -60,3 +63,7 @@ class TestIsRealValued:
     def test_nearly_real_tensor_is_real_within_tol(self):
         z = torch.tensor([1.0 + 1e-12j], dtype=torch.complex128)
         assert is_real_valued(z, tol=1e-8)
+
+    def test_real_dtype_tensor_is_real(self):
+        z = torch.tensor([1.0, 2.0, 3.0])  # float32, not complex
+        assert is_real_valued(z)
