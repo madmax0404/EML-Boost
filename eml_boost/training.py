@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+import sympy as sp
 
 from eml_boost.selection import select_winner
+from eml_boost.symbolic.simplify import snap_constants
 from eml_boost.weak_learners.base import RoundRecord, WeakLearner, WeakLearnerKind
 from eml_boost.weak_learners.dt import fit_dt_stump
 from eml_boost.weak_learners.eml import fit_eml_tree
@@ -44,6 +46,34 @@ class EmlBoostModel:
         residual_var = float(np.var(total - formula))
         return max(0.0, 1.0 - residual_var / total_var)
 
+    @property
+    def formula(self) -> sp.Expr | None:
+        """Top-level recovered closed-form expression, if any (spec 7.2).
+
+        Sums all snapped EML weak learners' contributions scaled by their
+        learned eta, then simplifies via sympy. Returns None if no EML
+        rounds produced snap_ok formulas.
+        """
+        from eml_boost.weak_learners.eml import EmlWeakLearner
+
+        contributions: list[sp.Expr] = []
+        for learner, eta, kind in self.weak_learners:
+            if (
+                kind == WeakLearnerKind.EML
+                and isinstance(learner, EmlWeakLearner)
+                and learner.snap_ok
+                and learner.formula is not None
+            ):
+                contributions.append(sp.Float(eta) * learner.formula)
+        if not contributions:
+            return None
+        total = sp.simplify(sp.Add(*contributions))
+        return snap_constants(total)
+
+    def is_exact_recovery(self, X: np.ndarray, threshold: float = 0.99) -> bool:
+        """True when formula-part coverage exceeds threshold (spec 7.3)."""
+        return self.coverage(X) > threshold
+
     def describe(self, X: np.ndarray | None = None) -> str:
         n_eml = sum(1 for r in self.history if r.kind == WeakLearnerKind.EML)
         n_dt = sum(1 for r in self.history if r.kind == WeakLearnerKind.DT)
@@ -51,6 +81,13 @@ class EmlBoostModel:
             "EmlBoostRegressor summary",
             f"  Total rounds:         {len(self.history)} ({n_eml} EML, {n_dt} DT)",
         ]
+        f = self.formula
+        if f is not None:
+            lines.append(f"  Recovered formula:    {f}")
+        else:
+            lines.append(
+                "  Recovered formula:    (none — no EML rounds produced closed-form output)"
+            )
         if X is not None:
             cov = self.coverage(X)
             lines.append(f"  Formula coverage:     {cov * 100:.1f}%")

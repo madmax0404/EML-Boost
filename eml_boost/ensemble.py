@@ -58,5 +58,14 @@ class EmlBoostRegressor(BaseEstimator, RegressorMixin):
         return self._model.formula_predict(X)
 
     @property
+    def formula(self):
+        """Recovered closed-form sympy expression, or None (spec 7.2)."""
+        return self._model.formula
+
+    def is_exact_recovery(self, X: np.ndarray, threshold: float = 0.99) -> bool:
+        """True when formula coverage exceeds threshold (spec 7.3)."""
+        return self._model.is_exact_recovery(X, threshold)
+
+    @property
     def history(self):
         return self._model.history

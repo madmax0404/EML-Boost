@@ -158,27 +158,39 @@ def fit_eml_tree(
             continue  # defensive guard
 
         snapped = snap_master_formula(mf)
-        formula = snapped_to_sympy(snapped, feature_names)
-        formula = snap_constants(formula)
+        formula_std = snapped_to_sympy(snapped, feature_names)
+        formula_std = snap_constants(formula_std)
 
-        # C1 (spec 5.4): After snap, evaluate the formula on real inner-val data
-        # and require |imag part| < 1e-8. This catches snapped formulas that
-        # still produce complex-valued outputs on real inputs (e.g., log of a
-        # negative constant that wasn't caught by snap_constants).
-        snap_iv_vals = _eval_formula_numpy(formula, feature_names, X_std[val_idx])
+        # C1 (spec 5.4): Verify on standardized features that the snapped
+        # sympy formula reproduces the unsnapped torch output.
+        # This check uses standardized inputs because the torch model was
+        # trained on standardized features.
+        snap_iv_vals = _eval_formula_numpy(formula_std, feature_names, X_std[val_idx])
         if snap_iv_vals is None or not is_real_valued(
             torch.tensor(snap_iv_vals, dtype=torch.complex128), tol=1e-8
         ):
             continue  # snapped formula is non-physical — discard
 
-        # Verify snap reproduces the unsnapped output.
         snap_ok = reproduces_numerically(
-            formula,
+            formula_std,
             feature_names,
             X_std[val_idx],
             unsnapped_pred,
             tol=_SNAP_TOL,
         )
+
+        # Un-standardize: express in original feature coordinates (spec 5.4).
+        # Each symbol x_i currently represents the z-scored value; substitute
+        # x_i -> (x_i - mu_i) / sigma_i so the stored formula uses raw feature
+        # values. The algebraic equivalence is guaranteed by the substitution;
+        # no re-verification is needed since snap_ok was established above.
+        sub_map = {
+            sp.Symbol(name): (sp.Symbol(name) - float(mu)) / float(sigma)
+            for name, mu, sigma in zip(feature_names, mean, std)
+        }
+        formula = sp.simplify(formula_std.xreplace(sub_map))
+        # Re-run constant snap as simplification may introduce near-exact values.
+        formula = snap_constants(formula)
 
         mse = float(np.mean((unsnapped_pred - y_iv_np) ** 2))
 
