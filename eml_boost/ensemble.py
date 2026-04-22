@@ -47,3 +47,16 @@ class EmlBoostRegressor(BaseEstimator, RegressorMixin):
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self._model.predict(X)
+
+    def describe(self, X: np.ndarray | None = None) -> str:
+        return self._model.describe(X)
+
+    def coverage(self, X: np.ndarray) -> float:
+        return self._model.coverage(X)
+
+    def formula_predict(self, X: np.ndarray) -> np.ndarray:
+        return self._model.formula_predict(X)
+
+    @property
+    def history(self):
+        return self._model.history

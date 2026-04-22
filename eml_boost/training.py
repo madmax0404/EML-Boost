@@ -27,6 +27,35 @@ class EmlBoostModel:
             out = out + eta * learner.predict(X)
         return out
 
+    def formula_predict(self, X: np.ndarray) -> np.ndarray:
+        """Sum of snapped EML contributions only."""
+        out = np.zeros(len(X), dtype=np.float64)
+        for learner, eta, kind in self.weak_learners:
+            if kind == WeakLearnerKind.EML:
+                from eml_boost.weak_learners.eml import EmlWeakLearner
+                if isinstance(learner, EmlWeakLearner) and learner.snap_ok:
+                    out = out + eta * learner.predict(X)
+        return out
+
+    def coverage(self, X: np.ndarray) -> float:
+        total = self.predict(X) - self.F_0
+        formula = self.formula_predict(X)
+        total_var = float(np.var(total)) + 1e-12
+        residual_var = float(np.var(total - formula))
+        return max(0.0, 1.0 - residual_var / total_var)
+
+    def describe(self, X: np.ndarray | None = None) -> str:
+        n_eml = sum(1 for r in self.history if r.kind == WeakLearnerKind.EML)
+        n_dt = sum(1 for r in self.history if r.kind == WeakLearnerKind.DT)
+        lines = [
+            "EmlBoostRegressor summary",
+            f"  Total rounds:         {len(self.history)} ({n_eml} EML, {n_dt} DT)",
+        ]
+        if X is not None:
+            cov = self.coverage(X)
+            lines.append(f"  Formula coverage:     {cov * 100:.1f}%")
+        return "\n".join(lines)
+
 
 def boost(
     X: np.ndarray,
