@@ -30,6 +30,7 @@ from eml_boost.symbolic.snap import (
     snap_master_formula,
 )
 from eml_boost.symbolic.verify import reproduces_numerically
+from eml_boost._numerics import is_real_valued
 
 _EXPLORATION_STEPS = 500
 _HARDENING_STEPS = 500
@@ -85,10 +86,31 @@ def fit_eml_tree(
 
     Selects the top-k features by |correlation| with y; standardizes them;
     runs n_restarts independent trainings; returns the best by inner-val MSE.
+
+    Parameters
+    ----------
+    X : np.ndarray, shape (n_samples, n_features)
+    y : np.ndarray, shape (n_samples,)
+    depth : int
+        Depth of the MasterFormula tree.
+    n_restarts : int
+        Number of independent random restarts to try.
+    k : int
+        Number of top features to select. Must be <= X.shape[1].
+    random_state : int or None
+        If None, each restart uses a freshly drawn torch seed (non-deterministic).
+        If int, seeds are derived from random_state so results are reproducible.
     """
-    rng = np.random.default_rng(random_state)
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
+
+    # I3: Validate k before any computation.
+    if k > X.shape[1]:
+        raise ValueError(f"k={k} exceeds number of features ({X.shape[1]})")
+
+    # I2: Use np.random.default_rng so random_state=None is truly non-deterministic
+    #     and random_state=0 is distinct from None.
+    rng = np.random.default_rng(random_state)
 
     # 1. Feature selection by |correlation|
     col_std = X.std(axis=0) + 1e-12
@@ -112,21 +134,44 @@ def fit_eml_tree(
     X_iv = torch.tensor(X_std[val_idx], dtype=torch.complex128)
     y_iv_np = y[val_idx]
 
+    # I2: Precompute per-restart torch seeds from the rng so that
+    #     random_state=None gives fresh (non-deterministic) seeds each call,
+    #     while an integer random_state gives fully reproducible seeds.
+    restart_seeds = [int(rng.integers(0, 2**31 - 1)) for _ in range(n_restarts)]
+
     # 3. Run n_restarts. For simplicity in v1 we do them sequentially; parallel
     #    stacking is a performance optimization flagged for v2.
     best: EmlWeakLearner | None = None
-    for seed in range(n_restarts):
-        torch.manual_seed((random_state or 0) * 1000 + seed)
+    for seed in restart_seeds:
+        torch.manual_seed(seed)
         mf = MasterFormula(depth=depth, k=k)
         _train_single(mf, X_tr, y_tr)
+
+        # Quick divergence check on the raw network output before snapping.
+        with torch.no_grad():
+            raw_iv = mf(X_iv)
+        if torch.isnan(raw_iv).any():
+            continue  # training diverged — skip this restart
+
+        unsnapped_pred = raw_iv.real.cpu().numpy().astype(np.float64)
+        if np.isnan(unsnapped_pred).any():
+            continue  # defensive guard
 
         snapped = snap_master_formula(mf)
         formula = snapped_to_sympy(snapped, feature_names)
         formula = snap_constants(formula)
 
+        # C1 (spec 5.4): After snap, evaluate the formula on real inner-val data
+        # and require |imag part| < 1e-8. This catches snapped formulas that
+        # still produce complex-valued outputs on real inputs (e.g., log of a
+        # negative constant that wasn't caught by snap_constants).
+        snap_iv_vals = _eval_formula_numpy(formula, feature_names, X_std[val_idx])
+        if snap_iv_vals is None or not is_real_valued(
+            torch.tensor(snap_iv_vals, dtype=torch.complex128), tol=1e-8
+        ):
+            continue  # snapped formula is non-physical — discard
+
         # Verify snap reproduces the unsnapped output.
-        with torch.no_grad():
-            unsnapped_pred = mf(X_iv).real.cpu().numpy().astype(np.float64)
         snap_ok = reproduces_numerically(
             formula,
             feature_names,
@@ -151,8 +196,34 @@ def fit_eml_tree(
         if best is None or learner.inner_val_mse < best.inner_val_mse:
             best = learner
 
-    assert best is not None
+    # I1: If every restart was skipped, raise a clear error instead of
+    #     returning a NaN learner or hitting an assert.
+    if best is None:
+        raise RuntimeError(
+            f"All {n_restarts} restarts diverged or produced non-real outputs. "
+            "Consider increasing n_restarts or reducing depth."
+        )
     return best
+
+
+def _eval_formula_numpy(
+    formula: sp.Expr,
+    feature_names: tuple[str, ...],
+    X_val: np.ndarray,
+) -> np.ndarray | None:
+    """Evaluate a sympy formula numerically on X_val (shape n x k).
+
+    Returns a complex numpy array, or None if evaluation raises an exception.
+    The caller can inspect the imaginary part to detect non-real outputs.
+    """
+    try:
+        syms = [sp.Symbol(name) for name in feature_names]
+        f_lambda = sp.lambdify(syms, formula, modules="numpy")
+        cols = [X_val[:, j] for j in range(len(feature_names))]
+        result = f_lambda(*cols)
+        return np.asarray(result, dtype=np.complex128)
+    except Exception:
+        return None
 
 
 def _train_single(mf: MasterFormula, X_tr: torch.Tensor, y_tr: torch.Tensor) -> None:

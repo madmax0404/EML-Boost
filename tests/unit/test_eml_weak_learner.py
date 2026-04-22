@@ -15,6 +15,26 @@ def test_fit_returns_weak_learner():
     assert preds.shape == y.shape
 
 
+def test_fit_raises_on_k_too_large():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(40, 2))
+    y = rng.normal(size=40)
+    with pytest.raises(ValueError, match="k=5"):
+        fit_eml_tree(X, y, depth=2, n_restarts=1, k=5, random_state=0)
+
+
+def test_random_state_none_succeeds_twice():
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(60, 2))
+    y = X[:, 0]
+    h1 = fit_eml_tree(X, y, depth=2, n_restarts=2, k=2, random_state=None)
+    h2 = fit_eml_tree(X, y, depth=2, n_restarts=2, k=2, random_state=None)
+    assert h1 is not None and h2 is not None
+    # Predictions shape check on both
+    assert h1.predict(X).shape == (60,)
+    assert h2.predict(X).shape == (60,)
+
+
 @pytest.mark.slow
 def test_fit_recovers_simple_formula():
     """Depth-2 fit on y = exp(x) should recover the formula on most seeds."""
