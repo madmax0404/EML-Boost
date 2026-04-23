@@ -63,19 +63,23 @@ def main() -> int:
     with csv_path.open("w") as f:
         f.write(
             "fraction_elementary,eml_win_rate,eml_coverage,"
-            "hybrid_test_mse,dt_only_test_mse,dt_improvement,total_rounds\n"
+            "hybrid_test_mse,dt_only_test_mse,dt_improvement,"
+            "xgboost_test_mse,xgb_improvement,total_rounds\n"
         )
-        for frac, rate, cov, hmse, dmse, imp, total in zip(
+        for frac, rate, cov, hmse, dmse, imp, xmse, ximp, total in zip(
             result.fractions,
             result.eml_win_rates,
             result.eml_coverages,
             result.hybrid_test_mse,
             result.dt_only_test_mse,
             result.dt_improvement,
+            result.xgboost_test_mse,
+            result.xgb_improvement,
             result.per_fraction_round_counts,
         ):
             f.write(
-                f"{frac},{rate},{cov},{hmse},{dmse},{imp},{total}\n"
+                f"{frac},{rate},{cov},{hmse},{dmse},{imp},"
+                f"{xmse},{ximp},{total}\n"
             )
     print(f"  wrote {csv_path}")
 
@@ -101,9 +105,10 @@ def main() -> int:
         )
     print(f"  wrote {json_path}")
 
-    # Plot — headline metric: DT-improvement (hybrid vs DT-only baseline).
-    # Coverage + win rate are kept as reference curves.
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=120)
+    # Plot — two headline metrics side-by-side: MSE improvement over DT-only
+    # (capacity-matched weak baseline) and MSE improvement over XGBoost (strong
+    # industry baseline). Plus reference curves for coverage and win rate.
+    fig, ax = plt.subplots(figsize=(9, 5.5), dpi=120)
     ax.plot(
         result.fractions,
         result.dt_improvement,
@@ -111,7 +116,16 @@ def main() -> int:
         linewidth=2.5,
         markersize=9,
         color="#2E86AB",
-        label="MSE improvement over DT-only baseline",
+        label="MSE improvement vs DT-only (capacity-matched)",
+    )
+    ax.plot(
+        result.fractions,
+        result.xgb_improvement,
+        marker="D",
+        linewidth=2.5,
+        markersize=9,
+        color="#9B2226",
+        label="MSE improvement vs XGBoost (capacity-matched)",
     )
     ax.plot(
         result.fractions,
@@ -132,7 +146,7 @@ def main() -> int:
         markersize=6,
         color="#E63946",
         linestyle="--",
-        alpha=0.6,
+        alpha=0.5,
         label="EML round-win rate",
     )
     ax.axhline(0, color="gray", linewidth=0.8)
@@ -144,8 +158,9 @@ def main() -> int:
         f"{MAX_ROUNDS} rounds, depth-{DEPTH_EML} EML)"
     )
     ax.set_xlim(-0.05, 1.05)
-    lo = min(-0.05, min(result.dt_improvement) - 0.05)
-    ax.set_ylim(lo, 1.05)
+    lo = min(-0.05, min(result.dt_improvement) - 0.05, min(result.xgb_improvement) - 0.05)
+    hi = max(1.05, max(result.xgb_improvement) + 0.05)
+    ax.set_ylim(lo, hi)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left")
     plt.tight_layout()
@@ -157,42 +172,46 @@ def main() -> int:
     print()
     print("=== Calibration curve ===")
     print(
-        f"{'frac_elem':>10}  {'DT-impr':>10}  {'hybrid_MSE':>11}  "
-        f"{'DT_MSE':>10}  {'coverage':>10}  {'EML-win':>10}  {'rounds':>7}"
+        f"{'frac_elem':>9}  {'DT-impr':>8}  {'XGB-impr':>9}  "
+        f"{'hybrid':>9}  {'DT_only':>9}  {'XGB':>9}  "
+        f"{'cov':>6}  {'win':>6}"
     )
-    for frac, rate, cov, hmse, dmse, imp, total in zip(
+    for frac, rate, cov, hmse, dmse, imp, xmse, ximp in zip(
         result.fractions,
         result.eml_win_rates,
         result.eml_coverages,
         result.hybrid_test_mse,
         result.dt_only_test_mse,
         result.dt_improvement,
-        result.per_fraction_round_counts,
+        result.xgboost_test_mse,
+        result.xgb_improvement,
     ):
         print(
-            f"{frac:>10.2f}  {imp:>10.3f}  {hmse:>11.4f}  {dmse:>10.4f}  "
-            f"{cov:>10.3f}  {rate:>10.3f}  {total:>7d}"
+            f"{frac:>9.2f}  {imp:>+8.3f}  {ximp:>+9.3f}  "
+            f"{hmse:>9.4f}  {dmse:>9.4f}  {xmse:>9.4f}  "
+            f"{cov:>6.3f}  {rate:>6.3f}"
         )
 
-    # Monotonicity check on DT-improvement (the headline metric now)
-    deltas = [
-        b - a
-        for a, b in zip(result.dt_improvement, result.dt_improvement[1:])
-    ]
-    if all(d >= -0.1 for d in deltas):
-        print(
-            "\nDT-improvement monotonic (within 0.1 slack): PASS — "
-            "hybrid's edge over DT-only baseline rises with frac_elementary"
-        )
-    else:
-        print("\nDT-improvement monotonic: FAIL — significant dips in the curve")
-        for i, d in enumerate(deltas):
-            if d < -0.1:
-                print(
-                    f"  drop from fraction {result.fractions[i]} "
-                    f"({result.dt_improvement[i]:.2f}) to {result.fractions[i + 1]} "
-                    f"({result.dt_improvement[i + 1]:.2f}): Δ={d:+.2f}"
-                )
+    # Monotonicity check on both headline metrics
+    for label, series in (
+        ("DT-improvement", result.dt_improvement),
+        ("XGB-improvement", result.xgb_improvement),
+    ):
+        deltas = [b - a for a, b in zip(series, series[1:])]
+        if all(d >= -0.1 for d in deltas):
+            print(
+                f"\n{label} monotonic (within 0.1 slack): PASS "
+                "— rises cleanly with frac_elementary"
+            )
+        else:
+            print(f"\n{label} monotonic: FAIL — dips in the curve")
+            for i, d in enumerate(deltas):
+                if d < -0.1:
+                    print(
+                        f"  drop from {result.fractions[i]:.2f} "
+                        f"({series[i]:+.2f}) to {result.fractions[i + 1]:.2f} "
+                        f"({series[i + 1]:+.2f}): Δ={d:+.2f}"
+                    )
 
     return 0
 

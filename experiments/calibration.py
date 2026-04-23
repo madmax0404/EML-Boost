@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import lightgbm as lgb
 import numpy as np
+import xgboost as xgb
 
 from eml_boost import EmlBoostRegressor
 from eml_boost.datasets import generate_mixed_regime, generate_pure_elementary, generate_pure_dt_regime
@@ -34,6 +35,12 @@ class CalibrationResult:
     hybrid_test_mse: list[float] = field(default_factory=list)
     dt_only_test_mse: list[float] = field(default_factory=list)
     dt_improvement: list[float] = field(default_factory=list)
+    # XGBoost as a strong industry baseline (depth 6, 100 rounds, lr 0.1).
+    # `xgb_improvement` is the fractional MSE reduction of the hybrid's
+    # test MSE against XGBoost's — the honest test of "does the hybrid's
+    # closed-form machinery beat a tuned tabular-boosting stack?"
+    xgboost_test_mse: list[float] = field(default_factory=list)
+    xgb_improvement: list[float] = field(default_factory=list)
 
 
 def _compose_dataset(frac_elementary: float, n: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
@@ -74,6 +81,7 @@ def run_calibration(
         coverages: list[float] = []
         hybrid_mses: list[float] = []
         dt_only_mses: list[float] = []
+        xgb_mses: list[float] = []
         for rep in range(n_datasets_per_fraction):
             sub_seed = int(rng.integers(0, 10**9))
             X, y = _compose_dataset(frac, n=n, seed=sub_seed)
@@ -121,13 +129,33 @@ def run_calibration(
             dt_only_test_pred = dt_only.predict(X_te)
             dt_only_mses.append(float(np.mean((y_te - dt_only_test_pred) ** 2)))
 
+            # XGBoost as a capacity-matched baseline: same max_rounds × same
+            # max_depth × same learning_rate as the hybrid's DT branch.
+            # This isolates architectural differences (EML vs DT per round)
+            # from the capacity gap; see experiment5 for the capacity-
+            # unlocked comparison against a strong XGBoost config.
+            xgb_model = xgb.XGBRegressor(
+                objective="reg:squarederror",
+                max_depth=depth_dt,
+                n_estimators=max_rounds,
+                learning_rate=0.1,
+                verbosity=0,
+                random_state=sub_seed,
+            )
+            xgb_model.fit(X_tr, y_tr)
+            xgb_pred = xgb_model.predict(X_te)
+            xgb_mses.append(float(np.mean((y_te - xgb_pred) ** 2)))
+
         rate = eml_wins / max(total_rounds, 1)
         result.eml_win_rates.append(rate)
         result.per_fraction_round_counts.append(total_rounds)
         result.eml_coverages.append(float(np.mean(coverages)))
         mean_hybrid = float(np.mean(hybrid_mses))
         mean_dt = float(np.mean(dt_only_mses))
+        mean_xgb = float(np.mean(xgb_mses))
         result.hybrid_test_mse.append(mean_hybrid)
         result.dt_only_test_mse.append(mean_dt)
         result.dt_improvement.append(1.0 - mean_hybrid / max(mean_dt, 1e-12))
+        result.xgboost_test_mse.append(mean_xgb)
+        result.xgb_improvement.append(1.0 - mean_hybrid / max(mean_xgb, 1e-12))
     return result

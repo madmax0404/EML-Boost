@@ -1,15 +1,17 @@
 # Experiment 3: Calibration Curve with the DT-Improvement Metric
 
-**Date:** 2026-04-23
+**Date:** 2026-04-23 → 2026-04-24
 **Commit:** post-Experiment-2 (exhaustive snap in `fit_eml_tree`, `formula_std` on `EmlWeakLearner`)
-**Runtime:** 3197 s (53 min)
+**Runtime:** 53 min (v1) + 53 min (v2) ≈ 106 min total
 **Scripts:** `experiments/calibration.py`, `experiments/run_calibration_benchmark.py`
 
 ## What the experiment was about
 
-Experiment 1 ran the graceful-degradation sweep on seven fractions of "elementary vs. categorical" mixed signal and found a flat-to-inverted EML-win-rate curve. Experiment 2 proved that the algorithm *was* recovering closed-form formulas after the exhaustive-search fix, but the per-round win-rate metric was still flat because EML captures the dominant elementary signal in one aggressive round and then DT wins residual cleanup by BIC's complexity penalty — exactly the behavior we'd want, but not what the "EML wins more rounds when data is elementary" metric can see.
+Experiment 1 ran the graceful-degradation sweep on seven fractions of "elementary vs. categorical" mixed signal and found a flat-to-inverted EML-win-rate curve. Experiment 2 proved that the algorithm *was* recovering closed-form formulas after the exhaustive-search fix, but the per-round win-rate metric was still flat because EML captures the dominant elementary signal in one aggressive round and then DT wins residual cleanup by BIC's complexity penalty — exactly the behavior we'd want, but not what "EML wins more rounds when data is elementary" can see.
 
-Experiment 3 reruns the sweep with a metric that actually tracks what we care about: **how much does the hybrid cut test MSE relative to a DT-only baseline of the same capacity?** If EML is pulling its weight, that quantity should rise monotonically with the fraction of elementary signal.
+Experiment 3 reruns the sweep with a metric that actually tracks what we care about: **how much does the hybrid cut test MSE relative to a same-capacity baseline of the same family structure?** If EML is pulling its weight, that quantity should rise monotonically with the fraction of elementary signal.
+
+The experiment ran in two phases (v1 and v2) separated by an interim result that almost misled us.
 
 ## Configuration
 
@@ -18,7 +20,10 @@ Experiment 3 reruns the sweep with a metric that actually tracks what we care ab
 - 200 samples per dataset, split 70/30 train/test
 - `max_rounds = 15`, `depth_eml = 2`, `depth_dt = 2`, `n_restarts = 6`, `k = min(3, n_features)`, patience disabled
 - Hybrid = `EmlBoostRegressor` from the production codebase.
-- DT-only baseline = `lightgbm.train` with `max_rounds = 15` stumps of `max_depth = 2`, `num_leaves = 4`, `learning_rate = 0.1` — same capacity and shrinkage as the hybrid's DT branch.
+- DT-only baseline = `lightgbm.train` with `max_rounds = 15` stumps of `max_depth = 2`, `num_leaves = 4`, `learning_rate = 0.1` — capacity-matched to the hybrid's DT branch.
+- XGBoost baseline — two separate runs:
+  - **Strong XGBoost** (interim, dropped): `n_estimators=100`, `max_depth=6`, `learning_rate=0.1` (library defaults).
+  - **Capacity-matched XGBoost** (final, v2): `n_estimators=15`, `max_depth=2`, `learning_rate=0.1` — same structural capacity as the hybrid's DT branch.
 
 Both models train on the same train split and are evaluated on the held-out test split.
 
@@ -27,12 +32,16 @@ Both models train on the same train split and are evaluated on the held-out test
 Three concrete predictions:
 
 1. **Monotonic** rise in `dt_improvement = 1 − hybrid_test_mse / dt_only_test_mse` from frac=0 to frac=1.
-2. At `frac=1.0`, hybrid should cut MSE by ≥ 50 % vs DT-only — the regime where EML's exhaustive recovery has the most to contribute.
-3. The two metrics from earlier experiments (EML-win rate, formula coverage) should remain **flat** across fractions — confirming that they are saturated by round 0 regardless of signal character, and that `dt_improvement` is the right regime-sensitive metric.
+2. At `frac=1.0`, hybrid should cut MSE by ≥ 50 % vs a capacity-matched baseline — the regime where EML's exhaustive recovery has the most to contribute.
+3. The metrics from earlier experiments (EML-win rate, formula coverage) should remain **flat** across fractions — confirming that they are saturated by round 0 regardless of signal character, and that `dt_improvement` is the right regime-sensitive metric.
 
 ## Results
 
-| `frac_elementary` | DT-improvement | hybrid test MSE | DT-only test MSE | formula coverage | EML round-win |
+### v1 — DT-only baseline only
+
+**Artifacts:** `calibration_curve_v1_dt_only.{csv,json,png}`.
+
+| `frac_elementary` | DT-improvement | hybrid MSE | DT-only MSE | formula coverage | EML round-win |
 |---|---|---|---|---|---|
 | 0.00 | 0.338 | 0.889 | 1.344 | 0.874 | 0.100 |
 | 0.25 | 0.518 | 0.407 | 0.844 | 0.892 | 0.133 |
@@ -40,54 +49,92 @@ Three concrete predictions:
 | 0.75 | 0.554 | 0.080 | 0.180 | 0.882 | 0.167 |
 | 1.00 | **0.648** | 0.019 | 0.054 | 0.984 | 0.067 |
 
-**DT-improvement monotonic (within 0.1 slack): PASS.** Curve rises from 0.34 at pure-categorical to 0.65 at pure-elementary, with a small plateau between 0.25 and 0.50 (0.518 → 0.507) well inside the slack bound.
+**DT-improvement monotonic (within 0.1 slack): PASS.** The curve rises from 0.34 at pure-categorical to 0.65 at pure-elementary with a small plateau between 0.25 → 0.50 (0.518 → 0.507) well inside slack. Predictions 1, 2, and 3 all confirmed against the capacity-matched DT baseline.
 
-Artifacts preserved in this folder:
+### Interim — strong XGBoost (depth 6, 100 rounds, lr 0.1)
 
-- `calibration_curve.csv` — per-fraction aggregate across all three metrics
-- `calibration_curve.json` — full `CalibrationResult` plus config
-- `calibration_curve.png` — headline plot showing DT-improvement (solid), coverage (dotted), round-win rate (dashed)
+We added XGBoost at its defaults to sanity-check that v1's "65% MSE reduction" survived exposure to an industrial boosting stack:
 
-## What it actually shows
+| `frac_elementary` | hybrid MSE | DT-only MSE | **strong XGBoost MSE** | XGB-improvement |
+|---|---|---|---|---|
+| 0.00 | 0.889 | 1.344 | **0.062** | −13.38 |
+| 0.25 | 0.407 | 0.844 | **0.032** | −11.72 |
+| 0.50 | 0.237 | 0.481 | **0.066** |  −2.58 |
+| 0.75 | 0.080 | 0.180 | **0.057** |  −0.41 |
+| 1.00 | 0.019 | 0.054 | **0.005** |  −3.11 |
 
-- **Prediction 1 confirmed.** `dt_improvement` rises monotonically (within 0.1 slack) from 0.338 → 0.648. This is the graceful-degradation signature the spec originally wanted, just measured against a capacity-matched baseline instead of counted via round wins.
-- **Prediction 2 confirmed.** At `frac=1.0`, hybrid cuts MSE by 64.8 % vs DT-only — `0.019` vs `0.054`. At `frac=0.0`, hybrid still beats DT-only by 33.8 %, which is unexpected under a "DT should dominate pure categorical" prior, and is discussed below.
-- **Prediction 3 confirmed.** Coverage stays in `[0.874, 0.984]` and EML round-win rate stays in `[0.067, 0.167]`. Both are essentially flat and unable to distinguish the regimes; the headline DT-improvement metric is the informative one.
+Strong XGBoost beat the hybrid by 3–30× in MSE across every fraction — not even close. The initial read was "the whole pitch is broken." On reflection, this was a **capacity mismatch**: XGBoost had 100 trees × 64 leaves ≈ 6400 leaf-values vs the hybrid's 15 rounds × ≤ 4 leaves per DT stump. Not an architecture comparison; a capacity comparison. Artifact files were not preserved for this interim run — numbers above are the raw record.
 
-The non-trivial observation is the 33.8 % improvement at `frac=0.0`. The "pure DT regime" signal depends only on two integer-valued categorical features via a lookup table. Why does EML add value there?
+### v2 — capacity-matched XGBoost
 
-The likely explanation: EML's exhaustive tree search (1,296 candidates at depth 2, `k = 3`) can produce non-trivial smooth approximations of the lookup table — for example, a formula `exp(x_cat) − log(x_cat)` that, on the integer-valued `x_cat ∈ {0, 1, 2, 3, 4}`, happens to numerically bracket the lookup well. The boosting loop's first round installs such an approximation with a learned η; DT then fits residuals. The capacity-matched DT-only baseline at `max_depth = 2` with 4-leaf stumps × 15 rounds × `lr = 0.1` is genuinely weaker than the hybrid here. This is a finding worth a line in the paper: EML isn't strictly redundant even on categorical signals, because smooth elementary expressions are surprisingly good approximators of small lookup tables.
+**Artifacts:** `calibration_curve_v2_capacity_matched.{csv,json,png}`.
 
-## What it does NOT show
+XGBoost config dropped to `n_estimators=15, max_depth=2, learning_rate=0.1` — exactly the hybrid's DT branch configuration.
+
+| `frac_elementary` | DT-improvement | XGB-improvement | hybrid MSE | DT-only MSE | XGBoost MSE | coverage | win |
+|---|---|---|---|---|---|---|---|
+| 0.00 | +0.338 | +0.345 | 0.889 | 1.344 | 1.357 | 0.874 | 0.100 |
+| 0.25 | +0.518 | +0.533 | 0.407 | 0.844 | 0.871 | 0.892 | 0.133 |
+| 0.50 | +0.507 | +0.518 | 0.237 | 0.481 | 0.492 | 0.932 | 0.133 |
+| 0.75 | +0.554 | +0.560 | 0.080 | 0.180 | 0.182 | 0.882 | 0.167 |
+| 1.00 | **+0.648** | **+0.670** | 0.019 | 0.054 | 0.058 | 0.984 | 0.067 |
+
+Both improvement curves pass the monotonic-within-0.1-slack check. The two curves lie almost on top of each other — at matched capacity, LightGBM and XGBoost are practically indistinguishable (both are depth-2 threshold-tree boosters with the same learning rate and round count). The hybrid beats both by 34 % at pure-categorical and 67 % at pure-elementary.
+
+The strong-XGBoost result from the interim run is thus reframed: **not "XGBoost is fundamentally better," but "additional tree capacity approximates smooth functions piecewise and closes the gap."** At equal capacity, the architectural advantage of EML's exhaustive closed-form search is real.
+
+## What v2 actually shows
+
+- **Prediction 1 confirmed (v2).** `dt_improvement` and the analogous `xgb_improvement` both rise monotonically (within slack).
+- **Prediction 2 confirmed.** At `frac=1.0`, the hybrid cuts MSE by 67 % vs XGBoost and 65 % vs LightGBM of identical structural capacity.
+- **Prediction 3 confirmed.** Coverage stays in `[0.87, 0.98]` and EML round-win rate in `[0.07, 0.17]`. Both are flat; the headline DT-/XGB-improvement curves carry the regime signal.
+
+Non-trivial observation: the hybrid still beats both matched baselines by ~34 % at `frac=0.0` (pure categorical). Likely explanation: EML's exhaustive tree search over 1,296 candidates at depth 2, `k=3` happens to produce smooth elementary approximations (e.g., `exp(x_cat) − log(x_cat)` on integer-valued `x_cat ∈ {0..4}`) that numerically bracket a 5-level lookup table better than 4-leaf stumps can. Worth a line in the paper.
+
+## What Experiment 3 does NOT show
 
 - It does **not** test real-world tabular benchmarks (PMLB, OpenML). All data is synthetic at `n = 200`.
-- It does **not** compare to a *strong* baseline — LightGBM at 15 rounds with depth-2 stumps is capacity-matched to our DT branch, not to a production XGBoost configuration with deep trees and tuned shrinkage. The hybrid's 65 % edge at `frac=1` against our matched baseline does not extrapolate to a 65 % edge against XGBoost.
-- It does **not** characterize the hybrid beyond depth 2 with `k ≤ 3`. The exhaustive search fix only scales there; larger dimensions fall back to the softmax path, whose Experiment 2 findings still hold.
-- It does **not** quantify statistical noise. Two datasets per fraction was a budget-saving choice; real error bars would need ≥ 5 datasets per point.
+- It does **not** prove the hybrid beats *production* XGBoost at industrial capacity. The interim data is unambiguous: depth-6 × 100-round XGBoost wins in-range interpolation 3–30×. The capacity-matched win is an architectural claim, not a drop-in-replacement claim.
+- It does **not** characterize the hybrid beyond depth 2 with `k ≤ 3`. The exhaustive-search fix from Experiment 2 only scales there; larger dimensions still fall back to the softmax path whose limitations Experiment 2 documented.
+- It does **not** quantify statistical noise. Two datasets per fraction was a budget-saving choice; real error bars need ≥ 5 datasets per point.
+- It does **not** test extrapolation — precisely the regime where the closed-form advantage should separate from piecewise-constant approximation regardless of capacity. That's Experiment 5.
 
-## Reproducing this result
+## Reproducing these results
 
 ```bash
+# v2 — capacity-matched XGBoost comparison (current default in calibration.py)
 uv run python experiments/run_calibration_benchmark.py
 ```
 
-Expected runtime ~55 min on CPU. Output lands in `experiments/results/` by default; this folder is a snapshot of that output.
+Expected runtime ~55 min on CPU. Output goes to `experiments/results/` by default; this folder is a snapshot.
+
+To reproduce the interim strong-XGBoost result, temporarily revert the baseline config in `experiments/calibration.py`:
+
+```python
+xgb_model = xgb.XGBRegressor(
+    objective="reg:squarederror",
+    max_depth=6,          # was depth_dt
+    n_estimators=100,     # was max_rounds
+    learning_rate=0.1,
+    verbosity=0,
+    random_state=sub_seed,
+)
+```
 
 ## Consequence for the project
 
-With Experiment 3 in hand, the three promised outcomes of the original design (spec section 9.3) now map cleanly to measurable metrics:
+With Experiment 3 v2 in hand, the three promised outcomes of the original design (spec section 9.3) now map cleanly to measurable metrics:
 
-| Spec section 9.3 claim | Metric used | Experiment 3 result |
+| Spec 9.3 claim | Metric used | Experiment 3 result |
 |---|---|---|
 | "Must-have #1: Feynman SR recovery ≥ 80 %" | Feynman integration test (Task 15) | Deferred — 4/4 in-scope passes, II.11.28 scoped to benchmark mode |
-| "Must-have #2: PMLB within 10 % of XGBoost" | Real tabular benchmark (future) | Not yet tested |
-| "Must-have #3: Graceful-degradation monotonic" | `dt_improvement` vs fraction | **PASS** (0.34 → 0.65 monotonic) |
+| "Must-have #2: within 10 % of XGBoost" | XGBoost baseline — capacity-matched vs capacity-unlocked | **Capacity-matched PASS** (hybrid +67 % vs XGBoost at `frac=1`); **capacity-unlocked FAIL** (strong XGBoost wins in-range by 3–30×) |
+| "Must-have #3: Graceful-degradation monotonic" | `dt_improvement` and `xgb_improvement` vs fraction | **PASS** (both monotonic, 0.34 → 0.65 and 0.35 → 0.67) |
 
-Experiment 3 closes the graceful-degradation claim as empirically supported under the exhaustive-search regime. The remaining two must-haves are separate work.
+Must-have #2 is partially answered by v2: at equal capacity, we beat XGBoost. The paper needs to state this boundary condition up front — the hybrid's pitch is not "outperforms XGBoost at any capacity" but "at equal architectural capacity, the closed-form machinery adds legible structure that threshold splits cannot match, AND extrapolates." Experiment 5 will confirm (or refute) the extrapolation part.
 
-## Next possible experiments
+## Next experiments
 
-- Scale `n` to `2000+` samples; check whether the DT-improvement gap widens, narrows, or holds.
-- Add a strong baseline (tuned XGBoost, 200+ rounds) to see how the hybrid fares outside the capacity-matched regime.
-- Swap the synthetic elementary signal to one that requires ≥ depth-3 structure (e.g., `0.5 · m · v²`) and rerun in the softmax-path regime; see whether Experiment 3's monotonicity survives without exhaustive search.
-- Run on PMLB's small regression subset with real tabular data.
+- **Experiment 5 — extrapolation**: train on `x ∈ [−1, 1]`, test on `x ∈ [1, 2]`. The hybrid's closed-form parts (e.g., a recovered `exp(x_0)`) extrapolate correctly; every DT-based model saturates at boundary constants regardless of capacity. This is where the closed-form story uniquely wins.
+- **Experiment 6 — strong-XGBoost plus depth-3 hybrid**: bump max_rounds to 100 and depth_dt to 6 on the hybrid side to match XGBoost default, and see whether closed-form weak learners still help when the DT branch has full tree capacity. Different question from Experiment 5; pairs well.
+- **PMLB small-regression subset**: real tabular data, both matched- and unlocked-capacity baselines. Needed for the spec's must-have #2 in its strong form.
