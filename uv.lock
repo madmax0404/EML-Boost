@@ -489,7 +489,7 @@ wheels = [
 [[package]]
 name = "new-gbdt-angle"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "lightgbm" },
     { name = "numpy" },
