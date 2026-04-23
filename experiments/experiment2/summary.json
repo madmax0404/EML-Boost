@@ -1,0 +1,12 @@
+{
+  "name": "depth-2 pure-elementary trace",
+  "formula": "exp(x0) + 0.5 * x1**2",
+  "depth_eml": 2,
+  "depth_dt": 2,
+  "n_restarts": 6,
+  "k": 2,
+  "max_rounds": 20,
+  "elapsed_seconds": 163.3405954837799,
+  "eml_win_rate": 0.25,
+  "snap_ok_rate": 0.0
+}

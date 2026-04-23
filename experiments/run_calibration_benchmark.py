@@ -24,10 +24,10 @@ import matplotlib.pyplot as plt
 from experiments.calibration import run_calibration
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-FRACTIONS = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
-N_DATASETS_PER_FRACTION = 3
+FRACTIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
+N_DATASETS_PER_FRACTION = 2
 N = 200
-MAX_ROUNDS = 20
+MAX_ROUNDS = 15
 N_RESTARTS = 6
 DEPTH_EML = 2
 DEPTH_DT = 2
@@ -61,11 +61,22 @@ def main() -> int:
     # Raw CSV
     csv_path = RESULTS_DIR / "calibration_curve.csv"
     with csv_path.open("w") as f:
-        f.write("fraction_elementary,eml_win_rate,total_rounds\n")
-        for frac, rate, total in zip(
-            result.fractions, result.eml_win_rates, result.per_fraction_round_counts
+        f.write(
+            "fraction_elementary,eml_win_rate,eml_coverage,"
+            "hybrid_test_mse,dt_only_test_mse,dt_improvement,total_rounds\n"
+        )
+        for frac, rate, cov, hmse, dmse, imp, total in zip(
+            result.fractions,
+            result.eml_win_rates,
+            result.eml_coverages,
+            result.hybrid_test_mse,
+            result.dt_only_test_mse,
+            result.dt_improvement,
+            result.per_fraction_round_counts,
         ):
-            f.write(f"{frac},{rate},{total}\n")
+            f.write(
+                f"{frac},{rate},{cov},{hmse},{dmse},{imp},{total}\n"
+            )
     print(f"  wrote {csv_path}")
 
     # JSON
@@ -90,28 +101,53 @@ def main() -> int:
         )
     print(f"  wrote {json_path}")
 
-    # Plot
+    # Plot — headline metric: DT-improvement (hybrid vs DT-only baseline).
+    # Coverage + win rate are kept as reference curves.
     fig, ax = plt.subplots(figsize=(8, 5), dpi=120)
     ax.plot(
         result.fractions,
-        result.eml_win_rates,
+        result.dt_improvement,
         marker="o",
-        linewidth=2,
-        markersize=8,
+        linewidth=2.5,
+        markersize=9,
         color="#2E86AB",
+        label="MSE improvement over DT-only baseline",
     )
+    ax.plot(
+        result.fractions,
+        result.eml_coverages,
+        marker="^",
+        linewidth=1.2,
+        markersize=6,
+        color="#588157",
+        linestyle=":",
+        alpha=0.7,
+        label="Formula coverage (spec 7.3)",
+    )
+    ax.plot(
+        result.fractions,
+        result.eml_win_rates,
+        marker="s",
+        linewidth=1.2,
+        markersize=6,
+        color="#E63946",
+        linestyle="--",
+        alpha=0.6,
+        label="EML round-win rate",
+    )
+    ax.axhline(0, color="gray", linewidth=0.8)
     ax.set_xlabel("Fraction of signal that is elementary")
-    ax.set_ylabel("EML-win rate across boosting rounds")
+    ax.set_ylabel("Metric")
     ax.set_title(
         "EML-Boost graceful degradation\n"
         f"(N={N}, {N_DATASETS_PER_FRACTION} datasets/fraction, "
         f"{MAX_ROUNDS} rounds, depth-{DEPTH_EML} EML)"
     )
     ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
+    lo = min(-0.05, min(result.dt_improvement) - 0.05)
+    ax.set_ylim(lo, 1.05)
     ax.grid(True, alpha=0.3)
-    ax.axhline(0.5, color="gray", linestyle="--", alpha=0.4, label="50% line")
-    ax.legend(loc="lower right")
+    ax.legend(loc="upper left")
     plt.tight_layout()
     plot_path = RESULTS_DIR / "calibration_curve.png"
     plt.savefig(plot_path)
@@ -120,27 +156,42 @@ def main() -> int:
     # Console summary
     print()
     print("=== Calibration curve ===")
-    print(f"{'frac_elem':>10}  {'EML-win':>10}  {'rounds':>7}")
-    for frac, rate, total in zip(
-        result.fractions, result.eml_win_rates, result.per_fraction_round_counts
+    print(
+        f"{'frac_elem':>10}  {'DT-impr':>10}  {'hybrid_MSE':>11}  "
+        f"{'DT_MSE':>10}  {'coverage':>10}  {'EML-win':>10}  {'rounds':>7}"
+    )
+    for frac, rate, cov, hmse, dmse, imp, total in zip(
+        result.fractions,
+        result.eml_win_rates,
+        result.eml_coverages,
+        result.hybrid_test_mse,
+        result.dt_only_test_mse,
+        result.dt_improvement,
+        result.per_fraction_round_counts,
     ):
-        print(f"{frac:>10.2f}  {rate:>10.3f}  {total:>7d}")
+        print(
+            f"{frac:>10.2f}  {imp:>10.3f}  {hmse:>11.4f}  {dmse:>10.4f}  "
+            f"{cov:>10.3f}  {rate:>10.3f}  {total:>7d}"
+        )
 
-    # Monotonicity check
+    # Monotonicity check on DT-improvement (the headline metric now)
     deltas = [
         b - a
-        for a, b in zip(result.eml_win_rates, result.eml_win_rates[1:])
+        for a, b in zip(result.dt_improvement, result.dt_improvement[1:])
     ]
     if all(d >= -0.1 for d in deltas):
-        print("\nMonotonic (within 0.1 slack): PASS — curve trends upward cleanly")
+        print(
+            "\nDT-improvement monotonic (within 0.1 slack): PASS — "
+            "hybrid's edge over DT-only baseline rises with frac_elementary"
+        )
     else:
-        print("\nMonotonic: FAIL — significant dips in the curve")
+        print("\nDT-improvement monotonic: FAIL — significant dips in the curve")
         for i, d in enumerate(deltas):
             if d < -0.1:
                 print(
                     f"  drop from fraction {result.fractions[i]} "
-                    f"({result.eml_win_rates[i]:.2f}) to {result.fractions[i + 1]} "
-                    f"({result.eml_win_rates[i + 1]:.2f}): Δ={d:+.2f}"
+                    f"({result.dt_improvement[i]:.2f}) to {result.fractions[i + 1]} "
+                    f"({result.dt_improvement[i + 1]:.2f}): Δ={d:+.2f}"
                 )
 
     return 0

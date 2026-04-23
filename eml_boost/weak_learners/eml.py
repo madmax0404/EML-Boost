@@ -39,19 +39,32 @@ _LR_MIN = 1e-4
 _ENTROPY_MAX = 0.5
 _SNAP_TOL = 1e-6
 
+# When the discrete tree space has <= this many configurations, skip the
+# softmax+snap pipeline entirely and enumerate every snapped tree directly,
+# picking the one with best inner-val MSE. Experiment 2 found that the
+# softmax optimizer lands in local minima whose argmax snap doesn't match
+# the continuous output; exhaustive enumeration sidesteps that failure mode.
+# Threshold covers depth 1 (all k) and depth 2 (k up to ~4); above this,
+# we fall back to the softmax path.
+_EXHAUSTIVE_THRESHOLD = 50_000
+
 
 @dataclass
 class EmlWeakLearner:
     """Result of fitting an EML tree to a residual target.
 
-    If snap_ok, `formula` is the closed-form sympy expression.
-    Otherwise, predictions come from the trained MasterFormula as-is.
+    If snap_ok, `formula` is the closed-form sympy expression in original
+    feature coordinates. `formula_std` is the same expression in
+    standardized coordinates — used for BIC complexity measurement
+    because un-standardization inflates RPN length with float coefficients
+    that don't reflect structural complexity.
     """
 
     trained_module: MasterFormula
     snapped: SnappedTree
     snap_ok: bool
-    formula: sp.Expr | None
+    formula: sp.Expr | None          # un-standardized, for display
+    formula_std: sp.Expr | None      # standardized, for BIC
     feature_names: tuple[str, ...]
     feature_idx: np.ndarray  # indices into the full feature matrix (length k)
     feature_mean: np.ndarray  # mean of the k selected features (length k)
@@ -68,10 +81,134 @@ class EmlWeakLearner:
             return out.real.cpu().numpy().astype(np.float64)
 
     def params_count(self) -> int:
-        """BIC complexity proxy. +1 for the per-round learned eta."""
-        if self.snap_ok and self.formula is not None:
-            return rpn_length(self.formula) + 1
+        """BIC complexity proxy. +1 for the per-round learned eta.
+
+        Uses the standardized formula's RPN length so that BIC measures
+        structural complexity, not the float-coefficient blow-up from
+        un-standardization.
+        """
+        if self.snap_ok and self.formula_std is not None:
+            return rpn_length(self.formula_std) + 1
         return count_active_positions(self.snapped) + 1
+
+
+def _tree_space_size(depth: int, k: int) -> int:
+    """Count of discrete snapped-tree configurations at given depth/k."""
+    internal_positions = (2**depth) - 2 if depth >= 2 else 0
+    leaf_positions = 2**depth
+    return (k + 2) ** internal_positions * (k + 1) ** leaf_positions
+
+
+def _enumerate_snapped_trees(depth: int, k: int):
+    """Yield every SnappedTree at the given depth and feature count."""
+    import itertools
+    internal_input_count = (2**depth) - 2 if depth >= 2 else 0
+    leaf_input_count = 2**depth
+    internal_choices = list(range(k + 2))
+    leaf_choices = list(range(k + 1))
+    for internal in itertools.product(internal_choices, repeat=internal_input_count):
+        for leaf in itertools.product(leaf_choices, repeat=leaf_input_count):
+            yield SnappedTree(
+                depth=depth,
+                k=k,
+                internal_input_count=internal_input_count,
+                leaf_input_count=leaf_input_count,
+                terminal_choices=tuple(internal) + tuple(leaf),
+            )
+
+
+def _fit_eml_tree_exhaustive(
+    X: np.ndarray,
+    y: np.ndarray,
+    depth: int,
+    k: int,
+    random_state: int | None,
+) -> EmlWeakLearner:
+    """Enumerate every discrete tree and pick the one with best inner-val MSE."""
+    rng = np.random.default_rng(random_state)
+
+    # Feature selection + standardization + inner val split
+    col_std = X.std(axis=0) + 1e-12
+    y_centered = y - y.mean()
+    corrs = (X - X.mean(axis=0)).T @ y_centered / (col_std * y.std() * len(y) + 1e-12)
+    feature_idx = np.argsort(-np.abs(corrs))[:k]
+    feature_names = tuple(f"x_{int(i)}" for i in feature_idx)
+    X_sel = X[:, feature_idx]
+    mean = X_sel.mean(axis=0)
+    std = X_sel.std(axis=0) + 1e-12
+    X_std = (X_sel - mean) / std
+
+    n = len(X_std)
+    perm = rng.permutation(n)
+    val_sz = max(int(0.2 * n), 1)
+    val_idx = perm[:val_sz]
+    X_iv_np = X_std[val_idx]
+    y_iv_np = y[val_idx]
+
+    symbols = [sp.Symbol(name) for name in feature_names]
+    best_mse = float("inf")
+    best_snapped: SnappedTree | None = None
+    best_formula_std: sp.Expr | None = None
+
+    for snapped in _enumerate_snapped_trees(depth, k):
+        formula_std = snapped_to_sympy(snapped, feature_names)
+        formula_std = snap_constants(formula_std)
+        if not formula_std.free_symbols:
+            continue  # dead-branch: all features unreferenced
+        try:
+            f = sp.lambdify(symbols, formula_std, modules=["numpy"])
+            iv_pred = np.asarray(
+                f(*[X_iv_np[:, i] for i in range(k)]),
+                dtype=np.float64,
+            )
+            if iv_pred.ndim == 0:
+                iv_pred = np.full(len(X_iv_np), float(iv_pred))
+        except Exception:
+            continue
+        if not np.all(np.isfinite(iv_pred)):
+            continue
+        mse = float(np.mean((iv_pred - y_iv_np) ** 2))
+        if mse < best_mse:
+            best_mse = mse
+            best_snapped = snapped
+            best_formula_std = formula_std
+
+    if best_snapped is None or best_formula_std is None:
+        raise RuntimeError(
+            f"Exhaustive search found no valid tree at depth={depth}, k={k}. "
+            "All candidates were constants or produced non-finite outputs."
+        )
+
+    # Un-standardize the formula (spec 5.4)
+    sub_map = {
+        sp.Symbol(name): (sp.Symbol(name) - float(mu)) / float(sigma)
+        for name, mu, sigma in zip(feature_names, mean, std)
+    }
+    formula = sp.simplify(best_formula_std.xreplace(sub_map))
+    formula = snap_constants(formula)
+
+    # Build a MasterFormula with one-hot logits matching the chosen tree,
+    # so EmlWeakLearner.predict can reuse the existing torch path.
+    mf = MasterFormula(depth=depth, k=k)
+    with torch.no_grad():
+        for logit_idx, choice in enumerate(best_snapped.terminal_choices):
+            p = mf.logits_list[logit_idx]
+            new = torch.full_like(p, -100.0)
+            new[choice] = 100.0
+            p.copy_(new)
+
+    return EmlWeakLearner(
+        trained_module=mf,
+        snapped=best_snapped,
+        snap_ok=True,  # exhaustive result IS the discrete form by construction
+        formula=formula,
+        formula_std=best_formula_std,
+        feature_names=feature_names,
+        feature_idx=feature_idx,
+        feature_mean=mean,
+        feature_std=std,
+        inner_val_mse=best_mse,
+    )
 
 
 def fit_eml_tree(
@@ -84,8 +221,9 @@ def fit_eml_tree(
 ) -> EmlWeakLearner:
     """Fit an EML weak learner to targets y given features X.
 
-    Selects the top-k features by |correlation| with y; standardizes them;
-    runs n_restarts independent trainings; returns the best by inner-val MSE.
+    When the discrete tree space is small (<= `_EXHAUSTIVE_THRESHOLD`),
+    enumerates every snapped tree and picks the best by inner-val MSE.
+    Otherwise falls back to `n_restarts` softmax trainings + argmax snap.
 
     Parameters
     ----------
@@ -94,7 +232,7 @@ def fit_eml_tree(
     depth : int
         Depth of the MasterFormula tree.
     n_restarts : int
-        Number of independent random restarts to try.
+        Number of independent random restarts (ignored for exhaustive path).
     k : int
         Number of top features to select. Must be <= X.shape[1].
     random_state : int or None
@@ -107,6 +245,10 @@ def fit_eml_tree(
     # I3: Validate k before any computation.
     if k > X.shape[1]:
         raise ValueError(f"k={k} exceeds number of features ({X.shape[1]})")
+
+    # Dispatch to exhaustive enumeration when the tree space is small.
+    if _tree_space_size(depth, k) <= _EXHAUSTIVE_THRESHOLD:
+        return _fit_eml_tree_exhaustive(X, y, depth, k, random_state)
 
     # I2: Use np.random.default_rng so random_state=None is truly non-deterministic
     #     and random_state=0 is distinct from None.
@@ -161,6 +303,14 @@ def fit_eml_tree(
         formula_std = snapped_to_sympy(snapped, feature_names)
         formula_std = snap_constants(formula_std)
 
+        # Dead-branch prune (Experiment 2 finding): if the snapped formula
+        # is a constant (no free symbols), the argmax topology has left all
+        # input features in dead subtrees unreferenced by the root. The
+        # continuous optimum relied on soft mixing that evaporates on snap.
+        # Reject and try another restart.
+        if not formula_std.free_symbols:
+            continue
+
         # C1 (spec 5.4): Verify on standardized features that the snapped
         # sympy formula reproduces the unsnapped torch output.
         # This check uses standardized inputs because the torch model was
@@ -199,6 +349,7 @@ def fit_eml_tree(
             snapped=snapped,
             snap_ok=snap_ok,
             formula=formula if snap_ok else None,
+            formula_std=formula_std if snap_ok else None,
             feature_names=feature_names,
             feature_idx=feature_idx,
             feature_mean=mean,
