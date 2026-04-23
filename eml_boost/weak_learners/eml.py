@@ -124,39 +124,48 @@ def _fit_eml_tree_exhaustive(
     k: int,
     random_state: int | None,
 ) -> EmlWeakLearner:
-    """Enumerate every discrete tree and pick the one with best inner-val MSE."""
+    """Enumerate every discrete tree and pick the one with best inner-val MSE.
+
+    Exhaustive search operates directly on raw (non-standardized) features.
+    Standardization is only needed for the softmax path's numerical stability;
+    exhaustive has no such concern, and skipping it lets the stored formula
+    be expressed in the literal feature coordinates (e.g. `exp(x_0)` rather
+    than `exp(x_0 / σ)`). This fix is what makes extrapolation correct.
+    """
     rng = np.random.default_rng(random_state)
 
-    # Feature selection + standardization + inner val split
+    # Feature selection by |correlation|
     col_std = X.std(axis=0) + 1e-12
     y_centered = y - y.mean()
     corrs = (X - X.mean(axis=0)).T @ y_centered / (col_std * y.std() * len(y) + 1e-12)
     feature_idx = np.argsort(-np.abs(corrs))[:k]
     feature_names = tuple(f"x_{int(i)}" for i in feature_idx)
     X_sel = X[:, feature_idx]
-    mean = X_sel.mean(axis=0)
-    std = X_sel.std(axis=0) + 1e-12
-    X_std = (X_sel - mean) / std
 
-    n = len(X_std)
+    # Sentinel mean/std — predict() will do (X − 0)/1 = X, preserving raw scale.
+    mean = np.zeros(k, dtype=np.float64)
+    std = np.ones(k, dtype=np.float64)
+
+    # Inner val split on raw features
+    n = len(X_sel)
     perm = rng.permutation(n)
     val_sz = max(int(0.2 * n), 1)
     val_idx = perm[:val_sz]
-    X_iv_np = X_std[val_idx]
+    X_iv_np = X_sel[val_idx]
     y_iv_np = y[val_idx]
 
     symbols = [sp.Symbol(name) for name in feature_names]
     best_mse = float("inf")
     best_snapped: SnappedTree | None = None
-    best_formula_std: sp.Expr | None = None
+    best_formula: sp.Expr | None = None
 
     for snapped in _enumerate_snapped_trees(depth, k):
-        formula_std = snapped_to_sympy(snapped, feature_names)
-        formula_std = snap_constants(formula_std)
-        if not formula_std.free_symbols:
+        formula = snapped_to_sympy(snapped, feature_names)
+        formula = snap_constants(formula)
+        if not formula.free_symbols:
             continue  # dead-branch: all features unreferenced
         try:
-            f = sp.lambdify(symbols, formula_std, modules=["numpy"])
+            f = sp.lambdify(symbols, formula, modules=["numpy"])
             iv_pred = np.asarray(
                 f(*[X_iv_np[:, i] for i in range(k)]),
                 dtype=np.float64,
@@ -171,24 +180,20 @@ def _fit_eml_tree_exhaustive(
         if mse < best_mse:
             best_mse = mse
             best_snapped = snapped
-            best_formula_std = formula_std
+            best_formula = formula
 
-    if best_snapped is None or best_formula_std is None:
+    if best_snapped is None or best_formula is None:
         raise RuntimeError(
             f"Exhaustive search found no valid tree at depth={depth}, k={k}. "
             "All candidates were constants or produced non-finite outputs."
         )
 
-    # Un-standardize the formula (spec 5.4)
-    sub_map = {
-        sp.Symbol(name): (sp.Symbol(name) - float(mu)) / float(sigma)
-        for name, mu, sigma in zip(feature_names, mean, std)
-    }
-    formula = sp.simplify(best_formula_std.xreplace(sub_map))
-    formula = snap_constants(formula)
+    # No un-standardization needed: formula is already in raw feature coords.
 
     # Build a MasterFormula with one-hot logits matching the chosen tree,
-    # so EmlWeakLearner.predict can reuse the existing torch path.
+    # so EmlWeakLearner.predict can reuse the existing torch path. The module
+    # will see raw X (since feature_mean=0, feature_std=1), matching the
+    # formula's raw-coordinate definition.
     mf = MasterFormula(depth=depth, k=k)
     with torch.no_grad():
         for logit_idx, choice in enumerate(best_snapped.terminal_choices):
@@ -200,9 +205,9 @@ def _fit_eml_tree_exhaustive(
     return EmlWeakLearner(
         trained_module=mf,
         snapped=best_snapped,
-        snap_ok=True,  # exhaustive result IS the discrete form by construction
-        formula=formula,
-        formula_std=best_formula_std,
+        snap_ok=True,
+        formula=best_formula,       # already raw-coord; no substitution needed
+        formula_std=best_formula,   # identical in this path — no standardization
         feature_names=feature_names,
         feature_idx=feature_idx,
         feature_mean=mean,

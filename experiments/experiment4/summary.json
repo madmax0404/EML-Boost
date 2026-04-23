@@ -1,0 +1,81 @@
+{
+  "config": {
+    "n_train": 500,
+    "n_test": 200,
+    "noise_std": 0.02,
+    "max_rounds": 100,
+    "depth_dt": 6,
+    "depth_eml": 2,
+    "train_range": [
+      -1.0,
+      1.0
+    ],
+    "extrap_range": [
+      1.0,
+      2.0
+    ],
+    "seed": 0
+  },
+  "results": {
+    "exp(x_0)": {
+      "Hybrid": {
+        "train_mse": 0.06158561754787978,
+        "in_range_mse": 0.06629503848586175,
+        "extrap_mse": 0.13050034109711492,
+        "elapsed_seconds": 51.18992495536804
+      },
+      "LightGBM": {
+        "train_mse": 0.0003492512234319864,
+        "in_range_mse": 0.0005518158332597946,
+        "extrap_mse": 6.435304319323288,
+        "elapsed_seconds": 0.34499645233154297
+      },
+      "XGBoost": {
+        "train_mse": 0.00021133299182352444,
+        "in_range_mse": 0.0005956835931895168,
+        "extrap_mse": 6.141424285663623,
+        "elapsed_seconds": 0.2861003875732422
+      }
+    },
+    "x_0": {
+      "Hybrid": {
+        "train_mse": 0.04281344608708961,
+        "in_range_mse": 0.04888144110594922,
+        "extrap_mse": 1.814127469368862,
+        "elapsed_seconds": 52.00182271003723
+      },
+      "LightGBM": {
+        "train_mse": 0.0003045710923614781,
+        "in_range_mse": 0.0005938837308250333,
+        "extrap_mse": 0.38464541528772445,
+        "elapsed_seconds": 0.23427128791809082
+      },
+      "XGBoost": {
+        "train_mse": 0.0002026666386465772,
+        "in_range_mse": 0.0005907108265170276,
+        "extrap_mse": 0.3506907533610326,
+        "elapsed_seconds": 0.16422080993652344
+      }
+    },
+    "x_0**2 + 0.5": {
+      "Hybrid": {
+        "train_mse": 0.03817220363669121,
+        "in_range_mse": 0.03863714131693018,
+        "extrap_mse": 2.3774470179924188,
+        "elapsed_seconds": 51.6034939289093
+      },
+      "LightGBM": {
+        "train_mse": 0.0005276195064897351,
+        "in_range_mse": 0.0008585527341250564,
+        "extrap_mse": 2.898384489269093,
+        "elapsed_seconds": 0.23433208465576172
+      },
+      "XGBoost": {
+        "train_mse": 0.00021190729184975942,
+        "in_range_mse": 0.0005617404599071423,
+        "extrap_mse": 2.7445476953061827,
+        "elapsed_seconds": 0.13260483741760254
+      }
+    }
+  }
+}
