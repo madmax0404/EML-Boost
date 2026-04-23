@@ -135,6 +135,6 @@ Must-have #2 is partially answered by v2: at equal capacity, we beat XGBoost. Th
 
 ## Next experiments
 
-- **Experiment 5 — extrapolation**: train on `x ∈ [−1, 1]`, test on `x ∈ [1, 2]`. The hybrid's closed-form parts (e.g., a recovered `exp(x_0)`) extrapolate correctly; every DT-based model saturates at boundary constants regardless of capacity. This is where the closed-form story uniquely wins.
-- **Experiment 6 — strong-XGBoost plus depth-3 hybrid**: bump max_rounds to 100 and depth_dt to 6 on the hybrid side to match XGBoost default, and see whether closed-form weak learners still help when the DT branch has full tree capacity. Different question from Experiment 5; pairs well.
+- **Experiment 4 — extrapolation**: train on `x ∈ [−1, 1]`, test on `x ∈ [1, 2]`. The hybrid's closed-form parts (e.g., a recovered `exp(x_0)`) extrapolate correctly; every DT-based model saturates at boundary constants regardless of capacity. This is where the closed-form story uniquely wins.
+- **Experiment 5 — strong-XGBoost plus depth-3 hybrid**: bump max_rounds to 100 and depth_dt to 6 on the hybrid side to match XGBoost default, and see whether closed-form weak learners still help when the DT branch has full tree capacity. Different question from Experiment 5; pairs well.
 - **PMLB small-regression subset**: real tabular data, both matched- and unlocked-capacity baselines. Needed for the spec's must-have #2 in its strong form.
