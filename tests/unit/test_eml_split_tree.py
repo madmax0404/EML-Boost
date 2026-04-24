@@ -238,3 +238,74 @@ def test_use_stacked_blend_false_matches_current_behavior():
     n_eml = _count_eml_leaves(m._root)
     n_total = _count_leaves(m._root)
     assert n_eml < 0.4 * n_total, f"{n_eml}/{n_total} EML leaves on pure noise"
+
+
+def test_stacked_blend_collapses_to_constant_on_pure_noise():
+    """With `use_stacked_blend=True`, a regressor trained on pure Gaussian
+    noise should produce mostly constant leaves because α ≈ 1 for every
+    candidate — there's no EML signal to latch onto."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = rng.normal(size=800)
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=50, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=50,
+        use_stacked_blend=True, random_state=0,
+    ).fit(X, y)
+    n_eml = _count_eml_leaves(m._root)
+    n_total = _count_leaves(m._root)
+    # Blend-on should be at LEAST as regularizing as the 5% gate on noise;
+    # 40% was the gate's tolerance and is also what we require here.
+    assert n_eml < 0.4 * n_total, f"{n_eml}/{n_total} EML leaves on pure noise"
+
+
+def test_stacked_blend_activates_on_clean_elementary_signal():
+    """On `y = exp(x_0) + tiny_noise`, the blend should latch onto the EML
+    tree (α ≈ 0) and produce EML leaves that outperform constant leaves."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
+
+    m_blend = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_stacked_blend=True, random_state=0,
+    ).fit(X, y)
+    m_const = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=0, use_stacked_blend=True, random_state=0,
+    ).fit(X, y)
+
+    mse_blend = _mse(m_blend.predict(X), y)
+    mse_const = _mse(m_const.predict(X), y)
+    assert mse_blend < mse_const, f"blend={mse_blend:.4f} vs const={mse_const:.4f}"
+    assert _count_eml_leaves(m_blend._root) >= 1
+
+
+def test_stacked_blend_no_numerical_blowup_on_heavy_tails():
+    """A leaf-local feature with magnitudes into the millions (like
+    PMLB 562_cpu_small) must not produce NaN/inf predictions under the
+    blended path."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(800, 2)) * 1e6
+    # Targets that are a small, well-behaved transformation of the big feature.
+    y = 0.001 * (X[:, 0] / 1e6)
+
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=50, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=50,
+        use_stacked_blend=True, random_state=0,
+    ).fit(X, y)
+    pred = m.predict(X)
+    assert np.all(np.isfinite(pred)), (
+        "prediction contains NaN or inf — numerical stability failure"
+    )

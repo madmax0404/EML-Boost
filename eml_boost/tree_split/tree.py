@@ -475,10 +475,102 @@ class EmlSplitTreeRegressor:
             bias=float(bias[best_idx].item()),
         )
 
-    def _select_leaf_blended(self, **ctx) -> Node:
-        """Stacked-blend tree selection (Task 2). Temporarily routes to the
-        gated path so the refactor in Task 1 is behavior-preserving."""
-        return self._select_leaf_gated(**ctx)
+    def _select_leaf_blended(
+        self,
+        *,
+        y_full: "torch.Tensor",
+        y_val: "torch.Tensor",
+        eta: "torch.Tensor",
+        bias: "torch.Tensor",
+        preds_val: "torch.Tensor",
+        valid: "torch.Tensor",
+        k: int,
+        top_features: np.ndarray,
+        mean_x: "torch.Tensor",
+        std_x: "torch.Tensor",
+        constant_value: float,
+    ) -> Node:
+        """Stacked-blend tree selection. Per candidate tree, fits the optimal
+        α ∈ [0, 1] on the val portion in closed form; picks the tree with
+        smallest α-optimized val-SSE; folds α into (η, β) for storage. No
+        gate — α=1 collapse to LeafNode replaces the accept/reject decision.
+        """
+        ybar = y_full.mean()
+        # Pure-EML val predictions per candidate.
+        val_pred = eta.unsqueeze(1) * preds_val + bias.unsqueeze(1)  # (n_trees, n_val)
+
+        # Prediction under the blend: blend = α·ȳ + (1−α)·val_pred.
+        # Loss = ||y_val − blend||² = ||(y_val − val_pred) − α·(ȳ − val_pred)||².
+        # Let s = ȳ − val_pred (per tree, per val sample). Closed form:
+        #   α* = sum(s · (y_val − val_pred)) / sum(s · s)
+        s = ybar - val_pred                                     # (n_trees, n_val)
+        y_minus_p = y_val.unsqueeze(0) - val_pred                # (n_trees, n_val)
+        s_dot_diff = (s * y_minus_p).sum(dim=1)                  # (n_trees,)
+        s_sq_sum = (s * s).sum(dim=1)                            # (n_trees,)
+
+        # When s_sq_sum ≈ 0 the EML prediction equals ȳ on val — the blend
+        # degenerates. Force α=1 in that case (constant beats nothing).
+        degenerate = s_sq_sum.abs() < 1e-12
+        s_sq_safe = torch.where(degenerate, torch.ones_like(s_sq_sum), s_sq_sum)
+        alpha = s_dot_diff / s_sq_safe
+        alpha = torch.clamp(alpha, 0.0, 1.0)
+        alpha = torch.where(degenerate, torch.ones_like(alpha), alpha)
+
+        # Blended val-SSE per tree.
+        blend_pred = alpha.unsqueeze(1) * ybar + (1.0 - alpha).unsqueeze(1) * val_pred
+        blend_res = y_val.unsqueeze(0) - blend_pred
+        blend_sse = (blend_res * blend_res).sum(dim=1)           # (n_trees,)
+
+        # Extend validity with finite-α.
+        finite_alpha = torch.isfinite(alpha)
+        valid_blend = valid & finite_alpha
+        blend_sse = torch.where(
+            valid_blend, blend_sse, torch.full_like(blend_sse, float("inf"))
+        )
+
+        best_idx = int(blend_sse.argmin().item())
+        if not bool(valid_blend[best_idx].item()):
+            return LeafNode(value=constant_value)
+
+        # Require the blend to genuinely improve on the constant leaf by at
+        # least ``leaf_eml_gain_threshold`` on the val set.  This guards
+        # against the multiple-testing effect: searching 144 trees almost
+        # always yields one spurious α < 1 on pure noise.  The check differs
+        # from the legacy gate: it compares the *α-optimised* blend val-SSE
+        # to the constant val-SSE rather than the raw EML val-SSE.
+        constant_val_sse = float(((y_val - ybar) ** 2).sum().item())
+        best_blend_sse = float(blend_sse[best_idx].item())
+        if best_blend_sse >= constant_val_sse * (1.0 - self.leaf_eml_gain_threshold):
+            return LeafNode(value=constant_value)
+
+        alpha_star = float(alpha[best_idx].item())
+        eta_raw = float(eta[best_idx].item())
+        bias_raw = float(bias[best_idx].item())
+        ybar_py = float(ybar.item())
+
+        # Fold α into (η, β).
+        eta_folded = (1.0 - alpha_star) * eta_raw
+        bias_folded = alpha_star * ybar_py + (1.0 - alpha_star) * bias_raw
+
+        # If the blend collapsed the EML contribution, emit a LeafNode so
+        # leaf-type counts remain interpretable.
+        if abs(eta_folded) < 1e-10:
+            return LeafNode(value=bias_folded)
+
+        desc_np = get_descriptor_np(2, k)
+        desc_row = desc_np[best_idx]
+        return EmlLeafNode(
+            snapped=SnappedTree(
+                depth=2, k=k,
+                internal_input_count=2, leaf_input_count=4,
+                terminal_choices=tuple(int(v) for v in desc_row),
+            ),
+            feature_subset=tuple(int(v) for v in top_features),
+            feature_mean=tuple(float(v) for v in mean_x.cpu().numpy()),
+            feature_std=tuple(float(v) for v in std_x.cpu().numpy()),
+            eta=eta_folded,
+            bias=bias_folded,
+        )
 
     def _best_threshold_histogram(
         self, values: np.ndarray, y: np.ndarray
