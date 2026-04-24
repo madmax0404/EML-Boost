@@ -1,0 +1,184 @@
+{
+  "192_vineyard": {
+    "0": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    },
+    "1": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    },
+    "2": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    }
+  },
+  "210_cloud": {
+    "0": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    },
+    "1": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    },
+    "2": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    }
+  },
+  "523_analcatdata_neavote": {
+    "0": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    },
+    "1": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    },
+    "2": {
+      "n_leaf_records": 0,
+      "n_eml_leaves": 0,
+      "n_const_leaves": 0,
+      "eml_leaf_fraction": 0.0,
+      "alpha_mean": NaN,
+      "alpha_stdev": 0.0
+    }
+  },
+  "557_analcatdata_apnea1": {
+    "0": {
+      "n_leaf_records": 74,
+      "n_eml_leaves": 57,
+      "n_const_leaves": 17,
+      "eml_leaf_fraction": 0.7702702702702703,
+      "alpha_mean": 0.38993392834389534,
+      "alpha_stdev": 0.42363037862539166
+    },
+    "1": {
+      "n_leaf_records": 23,
+      "n_eml_leaves": 14,
+      "n_const_leaves": 9,
+      "eml_leaf_fraction": 0.6086956521739131,
+      "alpha_mean": 0.4782067537307739,
+      "alpha_stdev": 0.45964926287004054
+    },
+    "2": {
+      "n_leaf_records": 36,
+      "n_eml_leaves": 26,
+      "n_const_leaves": 10,
+      "eml_leaf_fraction": 0.7222222222222222,
+      "alpha_mean": 0.4601733283036285,
+      "alpha_stdev": 0.41912511079093184
+    }
+  },
+  "529_pollen": {
+    "0": {
+      "n_leaf_records": 656,
+      "n_eml_leaves": 477,
+      "n_const_leaves": 179,
+      "eml_leaf_fraction": 0.7271341463414634,
+      "alpha_mean": 0.3462558299538725,
+      "alpha_stdev": 0.41120128343630324
+    },
+    "1": {
+      "n_leaf_records": 530,
+      "n_eml_leaves": 400,
+      "n_const_leaves": 130,
+      "eml_leaf_fraction": 0.7547169811320755,
+      "alpha_mean": 0.2916252971627916,
+      "alpha_stdev": 0.3879497831229065
+    },
+    "2": {
+      "n_leaf_records": 443,
+      "n_eml_leaves": 370,
+      "n_const_leaves": 73,
+      "eml_leaf_fraction": 0.835214446952596,
+      "alpha_mean": 0.2619766289400858,
+      "alpha_stdev": 0.35573888723664643
+    }
+  },
+  "562_cpu_small": {
+    "0": {
+      "n_leaf_records": 1562,
+      "n_eml_leaves": 1075,
+      "n_const_leaves": 487,
+      "eml_leaf_fraction": 0.6882202304737516,
+      "alpha_mean": 0.3067132922473141,
+      "alpha_stdev": 0.39005970214919045
+    },
+    "1": {
+      "n_leaf_records": 1740,
+      "n_eml_leaves": 1174,
+      "n_const_leaves": 566,
+      "eml_leaf_fraction": 0.674712643678161,
+      "alpha_mean": 0.31824899052322275,
+      "alpha_stdev": 0.3937153740733017
+    },
+    "2": {
+      "n_leaf_records": 546,
+      "n_eml_leaves": 443,
+      "n_const_leaves": 103,
+      "eml_leaf_fraction": 0.8113553113553114,
+      "alpha_mean": 0.19782361393835354,
+      "alpha_stdev": 0.3076395295285532
+    }
+  },
+  "564_fried": {
+    "0": {
+      "n_leaf_records": 4565,
+      "n_eml_leaves": 3698,
+      "n_const_leaves": 867,
+      "eml_leaf_fraction": 0.8100766703176342,
+      "alpha_mean": 0.25342598371095826,
+      "alpha_stdev": 0.3582385317662967
+    },
+    "1": {
+      "n_leaf_records": 3997,
+      "n_eml_leaves": 3277,
+      "n_const_leaves": 720,
+      "eml_leaf_fraction": 0.8198648986740055,
+      "alpha_mean": 0.246400989685617,
+      "alpha_stdev": 0.35164669711147667
+    },
+    "2": {
+      "n_leaf_records": 2801,
+      "n_eml_leaves": 2472,
+      "n_const_leaves": 329,
+      "eml_leaf_fraction": 0.88254194930382,
+      "alpha_mean": 0.20294137387528777,
+      "alpha_stdev": 0.3100563403546589
+    }
+  }
+}
