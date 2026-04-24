@@ -1,0 +1,238 @@
+
+=== dataset: 192_vineyard ===
+  [seed=0] n=    52  k=  2  train=41  test=11
+      D6_C10 (   0.8s,  28 rounds) RMSE=2.5660
+      D6_C30 (   0.0s,  28 rounds) RMSE=2.5660
+     D6_C100 (   0.0s,  28 rounds) RMSE=2.5660
+      D8_C10 (   0.0s,  28 rounds) RMSE=2.5660
+      D8_C30 (   0.0s,  28 rounds) RMSE=2.5660
+      lgb_d6 (   0.2s) RMSE=2.3949
+      xgb_d6 (   0.2s) RMSE=3.0312
+      lgb_d8 (   0.2s) RMSE=2.3949
+      xgb_d8 (   0.2s) RMSE=3.2042
+  [seed=1] n=    52  k=  2  train=41  test=11
+      D6_C10 (   0.1s,  54 rounds) RMSE=2.4747
+      D6_C30 (   0.1s,  54 rounds) RMSE=2.4747
+     D6_C100 (   0.1s,  54 rounds) RMSE=2.4747
+      D8_C10 (   0.1s,  54 rounds) RMSE=2.4747
+      D8_C30 (   0.1s,  54 rounds) RMSE=2.4747
+      lgb_d6 (   0.2s) RMSE=2.4165
+      xgb_d6 (   0.2s) RMSE=3.4206
+      lgb_d8 (   0.1s) RMSE=2.4165
+      xgb_d8 (   0.2s) RMSE=3.4880
+  [seed=2] n=    52  k=  2  train=41  test=11
+      D6_C10 (   0.0s,  35 rounds) RMSE=3.1207
+      D6_C30 (   0.0s,  35 rounds) RMSE=3.1207
+     D6_C100 (   0.0s,  35 rounds) RMSE=3.1207
+      D8_C10 (   0.0s,  35 rounds) RMSE=3.1207
+      D8_C30 (   0.0s,  35 rounds) RMSE=3.1207
+      lgb_d6 (   0.1s) RMSE=4.5223
+      xgb_d6 (   0.2s) RMSE=3.4648
+      lgb_d8 (   0.1s) RMSE=4.5223
+      xgb_d8 (   0.2s) RMSE=3.4909
+
+=== dataset: 210_cloud ===
+  [seed=0] n=   108  k=  5  train=86  test=22
+      D6_C10 (   0.4s,  42 rounds) RMSE=0.7573
+      D6_C30 (   0.3s,  37 rounds) RMSE=0.8299
+     D6_C100 (   0.3s,  33 rounds) RMSE=0.7986
+      D8_C10 (   0.3s,  42 rounds) RMSE=0.7573
+      D8_C30 (   0.3s,  37 rounds) RMSE=0.8299
+      lgb_d6 (   0.2s) RMSE=0.7734
+      xgb_d6 (   0.2s) RMSE=0.6548
+      lgb_d8 (   0.2s) RMSE=0.7734
+      xgb_d8 (   0.1s) RMSE=0.6615
+  [seed=1] n=   108  k=  5  train=86  test=22
+      D6_C10 (   0.4s,  53 rounds) RMSE=0.3122
+      D6_C30 (   0.3s,  33 rounds) RMSE=0.3002
+     D6_C100 (   0.3s,  40 rounds) RMSE=0.4089
+      D8_C10 (   0.4s,  53 rounds) RMSE=0.3122
+      D8_C30 (   0.3s,  33 rounds) RMSE=0.3002
+      lgb_d6 (   0.2s) RMSE=0.5469
+      xgb_d6 (   0.2s) RMSE=0.2667
+      lgb_d8 (   0.2s) RMSE=0.5469
+      xgb_d8 (   0.2s) RMSE=0.2637
+  [seed=2] n=   108  k=  5  train=86  test=22
+      D6_C10 (   0.2s,  27 rounds) RMSE=0.4745
+      D6_C30 (   0.2s,  26 rounds) RMSE=0.4619
+     D6_C100 (   0.2s,  28 rounds) RMSE=0.4524
+      D8_C10 (   0.2s,  27 rounds) RMSE=0.4745
+      D8_C30 (   0.2s,  26 rounds) RMSE=0.4619
+      lgb_d6 (   0.2s) RMSE=0.4989
+      xgb_d6 (   0.2s) RMSE=0.4816
+      lgb_d8 (   0.2s) RMSE=0.4989
+      xgb_d8 (   0.2s) RMSE=0.4789
+
+=== dataset: 523_analcatdata_neavote ===
+  [seed=0] n=   100  k=  2  train=80  test=20
+      D6_C10 (   0.2s,  40 rounds) RMSE=0.7373
+      D6_C30 (   0.2s,  40 rounds) RMSE=0.7047
+     D6_C100 (   0.2s,  40 rounds) RMSE=0.7399
+      D8_C10 (   0.2s,  40 rounds) RMSE=0.7373
+      D8_C30 (   0.2s,  40 rounds) RMSE=0.7104
+      lgb_d6 (   0.2s) RMSE=0.7221
+      xgb_d6 (   0.1s) RMSE=0.7685
+      lgb_d8 (   0.2s) RMSE=0.7221
+      xgb_d8 (   0.1s) RMSE=0.7685
+  [seed=1] n=   100  k=  2  train=80  test=20
+      D6_C10 (   0.3s,  80 rounds) RMSE=1.1251
+      D6_C30 (   0.5s, 111 rounds) RMSE=1.0402
+     D6_C100 (   0.4s,  96 rounds) RMSE=1.2198
+      D8_C10 (   0.3s,  80 rounds) RMSE=1.1251
+      D8_C30 (   0.4s, 111 rounds) RMSE=1.0402
+      lgb_d6 (   0.2s) RMSE=1.0407
+      xgb_d6 (   0.1s) RMSE=2.2208
+      lgb_d8 (   0.2s) RMSE=1.0407
+      xgb_d8 (   0.1s) RMSE=2.2208
+  [seed=2] n=   100  k=  2  train=80  test=20
+      D6_C10 (   0.2s,  51 rounds) RMSE=0.9346
+      D6_C30 (   0.2s,  51 rounds) RMSE=0.9042
+     D6_C100 (   0.2s,  51 rounds) RMSE=0.8356
+      D8_C10 (   0.2s,  51 rounds) RMSE=0.9346
+      D8_C30 (   0.2s,  51 rounds) RMSE=0.9042
+      lgb_d6 (   0.2s) RMSE=0.8304
+      xgb_d6 (   0.1s) RMSE=2.1315
+      lgb_d8 (   0.2s) RMSE=0.8304
+      xgb_d8 (   0.1s) RMSE=2.1315
+
+=== dataset: 557_analcatdata_apnea1 ===
+  [seed=0] n=   475  k=  3  train=380  test=95
+      D6_C10 (   5.4s, 133 rounds) RMSE=1309.9042
+      D6_C30 (   8.1s, 200 rounds) RMSE=1372.4392
+     D6_C100 (   6.9s, 172 rounds) RMSE=1339.9373
+      D8_C10 (   6.4s, 146 rounds) RMSE=1341.1236
+      D8_C30 (   7.9s, 175 rounds) RMSE=1387.8583
+      lgb_d6 (   0.2s) RMSE=1375.5553
+      xgb_d6 (   0.2s) RMSE=1137.8164
+      lgb_d8 (   0.2s) RMSE=1371.4685
+      xgb_d8 (   0.3s) RMSE=1062.0188
+  [seed=1] n=   475  k=  3  train=380  test=95
+      D6_C10 (   2.9s,  69 rounds) RMSE=872.6181
+      D6_C30 (   2.8s,  66 rounds) RMSE=895.0109
+     D6_C100 (   2.6s,  61 rounds) RMSE=880.8193
+      D8_C10 (   3.0s,  68 rounds) RMSE=890.5174
+      D8_C30 (   3.2s,  72 rounds) RMSE=882.2166
+      lgb_d6 (   0.2s) RMSE=1028.0661
+      xgb_d6 (   0.2s) RMSE=874.7259
+      lgb_d8 (   0.2s) RMSE=1007.7035
+      xgb_d8 (   0.3s) RMSE=893.0243
+  [seed=2] n=   475  k=  3  train=380  test=95
+      D6_C10 (   2.1s,  49 rounds) RMSE=1680.0095
+      D6_C30 (   2.3s,  55 rounds) RMSE=1644.6570
+     D6_C100 (   3.0s,  73 rounds) RMSE=1603.9824
+      D8_C10 (   3.0s,  67 rounds) RMSE=1611.5385
+      D8_C30 (   2.6s,  58 rounds) RMSE=1651.7797
+      lgb_d6 (   0.2s) RMSE=1728.9516
+      xgb_d6 (   0.2s) RMSE=1358.6742
+      lgb_d8 (   0.2s) RMSE=1737.2869
+      xgb_d8 (   0.3s) RMSE=1527.4098
+
+=== dataset: 529_pollen ===
+  [seed=0] n=  3848  k=  4  train=3078  test=770
+      D6_C10 (   8.0s,  77 rounds) RMSE=1.5546
+      D6_C30 (   7.3s,  65 rounds) RMSE=1.5511
+     D6_C100 (   8.4s,  82 rounds) RMSE=1.5390
+      D8_C10 (  12.0s,  80 rounds) RMSE=1.5596
+      D8_C30 (  10.7s,  62 rounds) RMSE=1.5795
+      lgb_d6 (   0.3s) RMSE=1.6000
+      xgb_d6 (   0.2s) RMSE=1.6113
+      lgb_d8 (   0.3s) RMSE=1.6057
+      xgb_d8 (   0.3s) RMSE=1.6659
+  [seed=1] n=  3848  k=  4  train=3078  test=770
+      D6_C10 (   8.9s,  95 rounds) RMSE=1.5336
+      D6_C30 (   7.3s,  63 rounds) RMSE=1.5266
+     D6_C100 (   7.1s,  59 rounds) RMSE=1.5320
+      D8_C10 (  10.2s,  53 rounds) RMSE=1.5280
+      D8_C30 (  10.2s,  53 rounds) RMSE=1.5329
+      lgb_d6 (   0.3s) RMSE=1.5491
+      xgb_d6 (   0.2s) RMSE=1.5621
+      lgb_d8 (   0.4s) RMSE=1.5884
+      xgb_d8 (   0.4s) RMSE=1.6150
+  [seed=2] n=  3848  k=  4  train=3078  test=770
+      D6_C10 (   7.6s,  67 rounds) RMSE=1.5298
+      D6_C30 (   7.8s,  70 rounds) RMSE=1.5126
+     D6_C100 (  10.9s, 124 rounds) RMSE=1.5298
+      D8_C10 (  10.8s,  63 rounds) RMSE=1.5385
+      D8_C30 (  10.3s,  52 rounds) RMSE=1.5596
+      lgb_d6 (   0.3s) RMSE=1.5517
+      xgb_d6 (   0.2s) RMSE=1.5626
+      lgb_d8 (   0.3s) RMSE=1.5512
+      xgb_d8 (   0.4s) RMSE=1.6129
+
+=== dataset: 562_cpu_small ===
+  [seed=0] n=  8192  k= 12  train=6553  test=1639
+      D6_C10 (  22.0s, 200 rounds) RMSE=2.5078
+      D6_C30 (  22.6s, 200 rounds) RMSE=2.5094
+     D6_C100 (  22.6s, 200 rounds) RMSE=2.5157
+      D8_C10 (  23.8s, 122 rounds) RMSE=2.5226
+      D8_C30 (  35.5s, 180 rounds) RMSE=2.5498
+      lgb_d6 (   0.3s) RMSE=3.0734
+      xgb_d6 (   0.3s) RMSE=3.0879
+      lgb_d8 (   0.4s) RMSE=3.1235
+      xgb_d8 (   0.4s) RMSE=3.1848
+  [seed=1] n=  8192  k= 12  train=6553  test=1639
+      D6_C10 (  18.4s, 167 rounds) RMSE=2.5525
+      D6_C30 (  22.1s, 194 rounds) RMSE=2.5821
+     D6_C100 (  19.9s, 168 rounds) RMSE=2.5946
+      D8_C10 (  26.4s, 139 rounds) RMSE=2.5890
+      D8_C30 (  24.3s, 117 rounds) RMSE=2.5800
+      lgb_d6 (   0.3s) RMSE=3.1184
+      xgb_d6 (   0.2s) RMSE=3.1229
+      lgb_d8 (   0.5s) RMSE=3.1534
+      xgb_d8 (   0.4s) RMSE=3.1781
+  [seed=2] n=  8192  k= 12  train=6553  test=1639
+      D6_C10 (  19.1s, 179 rounds) RMSE=2.5247
+      D6_C30 (  21.6s, 200 rounds) RMSE=2.4846
+     D6_C100 (  16.3s, 136 rounds) RMSE=2.5386
+      D8_C10 (  33.4s, 185 rounds) RMSE=2.5284
+      D8_C30 (  25.8s, 129 rounds) RMSE=2.5428
+      lgb_d6 (   0.3s) RMSE=2.6839
+      xgb_d6 (   0.3s) RMSE=2.5557
+      lgb_d8 (   0.4s) RMSE=2.6525
+      xgb_d8 (   0.4s) RMSE=2.5939
+
+=== dataset: 564_fried ===
+  [seed=0] n= 40768  k= 10  train=32614  test=8154
+      D6_C10 (  33.6s, 150 rounds) RMSE=1.0719
+      D6_C30 (  28.1s, 115 rounds) RMSE=1.0718
+     D6_C100 (  28.8s, 121 rounds) RMSE=1.0742
+      D8_C10 (  66.3s, 106 rounds) RMSE=1.0836
+      D8_C30 (  65.1s, 106 rounds) RMSE=1.0760
+      lgb_d6 (   0.5s) RMSE=1.0717
+      xgb_d6 (   0.3s) RMSE=1.0767
+      lgb_d8 (   0.9s) RMSE=1.0931
+      xgb_d8 (   0.5s) RMSE=1.0941
+  [seed=1] n= 40768  k= 10  train=32614  test=8154
+      D6_C10 (  31.8s, 141 rounds) RMSE=1.0657
+      D6_C30 (  29.9s, 131 rounds) RMSE=1.0627
+     D6_C100 (  36.2s, 169 rounds) RMSE=1.0616
+      D8_C10 (  64.8s, 105 rounds) RMSE=1.0703
+      D8_C30 (  60.2s,  93 rounds) RMSE=1.0691
+      lgb_d6 (   0.5s) RMSE=1.0694
+      xgb_d6 (   0.3s) RMSE=1.0704
+      lgb_d8 (   0.9s) RMSE=1.0863
+      xgb_d8 (   0.5s) RMSE=1.0909
+  [seed=2] n= 40768  k= 10  train=32614  test=8154
+      D6_C10 (  32.6s, 147 rounds) RMSE=1.0725
+      D6_C30 (  28.6s, 123 rounds) RMSE=1.0724
+     D6_C100 (  29.9s, 130 rounds) RMSE=1.0713
+      D8_C10 (  68.1s, 117 rounds) RMSE=1.0884
+      D8_C30 (  63.4s, 102 rounds) RMSE=1.0730
+      lgb_d6 (   0.5s) RMSE=1.0635
+      xgb_d6 (   0.3s) RMSE=1.0655
+      lgb_d8 (   0.9s) RMSE=1.0837
+      xgb_d8 (   0.5s) RMSE=1.0965
+
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment13/summary.csv
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment13/summary.json
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment13/pmlb_rmse.png
+
+=== Aggregate summary (mean over 3 seeds, ratio vs matched-depth XGBoost) ===
+                     dataset    D6_C10    D6_C30   D6_C100    D8_C10    D8_C30
+                   210_cloud     1.100     1.135     1.183     1.100     1.134
+                   564_fried     0.999     0.998     0.998     0.988     0.981
+                  529_pollen     0.975     0.969     0.971     0.945     0.955
+     523_analcatdata_neavote     0.546     0.517     0.546     0.546     0.518
+               562_cpu_small     0.865     0.864     0.873     0.853     0.857
+                192_vineyard     0.823     0.823     0.823     0.801     0.801
+      557_analcatdata_apnea1     1.146     1.160     1.135     1.104     1.126

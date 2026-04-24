@@ -72,7 +72,7 @@ class EmlSplitTreeRegressor:
     def __init__(
         self,
         *,
-        max_depth: int = 6,
+        max_depth: int = 8,
         min_samples_leaf: int = 20,
         n_eml_candidates: int = 10,
         k_eml: int = 3,

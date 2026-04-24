@@ -62,7 +62,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         self,
         *,
         max_rounds: int = 200,
-        max_depth: int = 6,
+        max_depth: int = 8,
         learning_rate: float = 0.1,
         min_samples_leaf: int = 20,
         n_eml_candidates: int = 10,
