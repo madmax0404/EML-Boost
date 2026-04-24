@@ -43,6 +43,26 @@ class LeafNode:
 
 
 @dataclass
+class EmlLeafNode:
+    """Terminal whose prediction is an elementary expression of the features.
+
+    Predicts ``eta * eml_expr((X[:, feature_subset] − feature_mean) / feature_std)
+    + bias``. The standardization matches the fit-time preprocessing and
+    prevents `exp()` overflow on high-magnitude raw features (e.g. PMLB
+    cpu_small's values in the millions). The ``eta`` and ``bias`` are
+    closed-form-OLS-optimal scalars; the snapped tree itself has no free
+    continuous parameters.
+    """
+
+    snapped: SnappedTree
+    feature_subset: tuple[int, ...]
+    feature_mean: tuple[float, ...]
+    feature_std: tuple[float, ...]
+    eta: float
+    bias: float
+
+
+@dataclass
 class InternalNode:
     """Non-terminal: route samples left/right via `split`."""
 
@@ -51,4 +71,4 @@ class InternalNode:
     right: "Node"
 
 
-Node = Union[LeafNode, InternalNode]
+Node = Union[LeafNode, EmlLeafNode, InternalNode]

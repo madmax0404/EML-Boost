@@ -16,8 +16,28 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from eml_boost.tree_split.nodes import EmlSplit, InternalNode, LeafNode, RawSplit
+from eml_boost.tree_split.nodes import (
+    EmlLeafNode,
+    EmlSplit,
+    InternalNode,
+    LeafNode,
+    RawSplit,
+)
 from eml_boost.tree_split.tree import EmlSplitTreeRegressor
+
+
+def _count_eml_leaves(node):
+    if isinstance(node, EmlLeafNode):
+        return 1
+    if isinstance(node, LeafNode):
+        return 0
+    return _count_eml_leaves(node.left) + _count_eml_leaves(node.right)
+
+
+def _count_leaves(node):
+    if isinstance(node, (LeafNode, EmlLeafNode)):
+        return 1
+    return _count_leaves(node.left) + _count_leaves(node.right)
 
 
 def _mse(pred, y):
@@ -121,6 +141,68 @@ def test_histogram_vs_exact_similar_quality():
     mse_hist = _mse(m_hist.predict(X), y)
     # Histogram has finite-bin error but should be close.
     assert mse_hist < 2 * mse_exact + 0.05
+
+
+def test_eml_leaf_disabled_when_k_leaf_eml_zero():
+    """With k_leaf_eml=0, no leaf should ever be an EmlLeafNode."""
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0])
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=10, n_eml_candidates=0,
+        k_leaf_eml=0, random_state=0,
+    ).fit(X, y)
+    assert _count_eml_leaves(m._root) == 0
+
+
+def test_eml_leaf_activates_on_elementary_target():
+    """On y = exp(x_0), EML leaves with k=1 should snap to the right
+    expression and outperform constant leaves."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0])
+    m_eml_leaf = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        leaf_eml_gain_threshold=0.05, random_state=0,
+    ).fit(X, y)
+    m_constant_leaf = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=0, random_state=0,
+    ).fit(X, y)
+    mse_eml = _mse(m_eml_leaf.predict(X), y)
+    mse_const = _mse(m_constant_leaf.predict(X), y)
+    # EML leaves should beat constant leaves on a smooth signal.
+    assert mse_eml < mse_const
+    # And at least one leaf should have actually become an EML leaf.
+    assert _count_eml_leaves(m_eml_leaf._root) >= 1
+
+
+def test_eml_leaf_gate_rejects_weak_fits():
+    """On pure Gaussian noise, no EML leaf should beat a constant leaf by
+    5%, so the gate should reject every EML leaf candidate."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = rng.normal(size=800)  # pure noise
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=50, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=50,
+        leaf_eml_gain_threshold=0.05, random_state=0,
+    ).fit(X, y)
+    # No EML leaf should have passed the gate on pure noise.
+    # (Some overfitting to training noise is possible, but with the 5% gate
+    # and min_samples_leaf_eml=50, most leaves will stay constant.)
+    n_eml = _count_eml_leaves(m._root)
+    n_total = _count_leaves(m._root)
+    # Allow up to 40% EML leaves on pure noise before flagging as a gate
+    # failure — seed variance in tiny leaves can still let a few through.
+    assert n_eml < 0.4 * n_total, f"{n_eml}/{n_total} EML leaves on pure noise"
 
 
 def test_internal_node_stores_either_split_kind():

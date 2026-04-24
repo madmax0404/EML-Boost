@@ -25,10 +25,14 @@ from eml_boost._triton_exhaustive import (
     enumerate_depth2_descriptor,
     evaluate_trees_torch,
     evaluate_trees_triton,
+    get_descriptor_gpu,
+    get_descriptor_np,
+    get_feature_mask_gpu,
 )
 from eml_boost.symbolic.snap import SnappedTree
 from eml_boost.tree_split._gpu_split import gpu_histogram_split
 from eml_boost.tree_split.nodes import (
+    EmlLeafNode,
     EmlSplit,
     InternalNode,
     LeafNode,
@@ -70,6 +74,9 @@ class EmlSplitTreeRegressor:
         n_bins: int = 256,
         histogram_min_n: int = 500,
         use_gpu: bool = True,
+        k_leaf_eml: int = 1,
+        min_samples_leaf_eml: int = 50,
+        leaf_eml_gain_threshold: float = 0.05,
         random_state: int | None = None,
     ):
         if eml_depth != 2:
@@ -82,6 +89,14 @@ class EmlSplitTreeRegressor:
         self.n_bins = n_bins
         self.histogram_min_n = histogram_min_n
         self.use_gpu = use_gpu
+        # EML-at-leaves hyperparameters. `k_leaf_eml=0` disables EML leaves
+        # entirely; default k_leaf_eml=1 keeps the search space small (144
+        # trees) to bound overfitting. `leaf_eml_gain_threshold` is the
+        # minimum fractional SSE improvement over a constant leaf required
+        # to accept the EML form — XGBoost's γ concept applied to leaves.
+        self.k_leaf_eml = k_leaf_eml
+        self.min_samples_leaf_eml = min_samples_leaf_eml
+        self.leaf_eml_gain_threshold = leaf_eml_gain_threshold
         self.random_state = random_state
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "EmlSplitTreeRegressor":
@@ -90,18 +105,34 @@ class EmlSplitTreeRegressor:
         rng = np.random.default_rng(self.random_state)
 
         self._X_cpu = X
+        # Global mean/std across the full training set, used to standardize
+        # features inside EML leaves. Local (per-leaf) stats produce narrow
+        # ranges that blow up at predict time when same-leaf test samples
+        # lie slightly outside that local window — see cpu_small diagnosis.
+        self._global_mean = X.mean(axis=0)
+        self._global_std = np.maximum(X.std(axis=0), 1e-6)
         if self.use_gpu and torch.cuda.is_available():
             self._device = torch.device("cuda")
             self._X_gpu = torch.tensor(X, dtype=torch.float32, device=self._device)
+            self._global_mean_gpu = torch.tensor(
+                self._global_mean, dtype=torch.float32, device=self._device,
+            )
+            self._global_std_gpu = torch.tensor(
+                self._global_std, dtype=torch.float32, device=self._device,
+            )
         else:
             self._device = None
             self._X_gpu = None
+            self._global_mean_gpu = None
+            self._global_std_gpu = None
 
         indices = np.arange(len(X))
         self._root: Node = self._grow(indices, y, depth=0, rng=rng)
 
         # Release GPU handles after fit; tree stores only CPU Node objects.
         self._X_gpu = None
+        self._global_mean_gpu = None
+        self._global_std_gpu = None
         self._device = None
         return self
 
@@ -119,7 +150,7 @@ class EmlSplitTreeRegressor:
         self, indices: np.ndarray, y_sub: np.ndarray, depth: int, rng: np.random.Generator
     ) -> Node:
         if depth >= self.max_depth or len(y_sub) <= 2 * self.min_samples_leaf:
-            return LeafNode(value=float(y_sub.mean()) if len(y_sub) > 0 else 0.0)
+            return self._fit_leaf(indices, y_sub)
 
         if self._X_gpu is not None:
             best = self._find_best_split_gpu(indices, y_sub, rng)
@@ -127,11 +158,11 @@ class EmlSplitTreeRegressor:
             X_node = self._X_cpu[indices]
             best = self._find_best_split_cpu(X_node, y_sub, rng)
         if best is None:
-            return LeafNode(value=float(y_sub.mean()))
+            return self._fit_leaf(indices, y_sub)
 
         split, _gain, left_mask = best
         if left_mask.sum() < self.min_samples_leaf or (~left_mask).sum() < self.min_samples_leaf:
-            return LeafNode(value=float(y_sub.mean()))
+            return self._fit_leaf(indices, y_sub)
 
         return InternalNode(
             split=split,
@@ -296,6 +327,122 @@ class EmlSplitTreeRegressor:
         threshold = 0.5 * (v[best_i] + v[best_i + 1])
         return float(threshold), float(gain[best_i])
 
+    def _fit_leaf(self, indices: np.ndarray, y_sub: np.ndarray) -> Node:
+        """Build a leaf node. Tries an EML expression leaf if enabled and the
+        sample count is large enough; falls back to a constant leaf otherwise.
+
+        The EML leaf is accepted only if its closed-form-OLS SSE improvement
+        over the constant leaf exceeds ``leaf_eml_gain_threshold`` (fractional).
+        """
+        n = len(y_sub)
+        constant_value = float(y_sub.mean()) if n > 0 else 0.0
+
+        # Gates for attempting an EML leaf.
+        eml_disabled = self.k_leaf_eml <= 0
+        too_small = n < self.min_samples_leaf_eml
+        no_gpu = self._X_gpu is None or self._device is None
+        n_raw = self._X_cpu.shape[1] if self._X_cpu is not None else 0
+        if eml_disabled or too_small or no_gpu or n_raw == 0:
+            return LeafNode(value=constant_value)
+
+        device = self._device
+        assert device is not None and self._X_gpu is not None
+
+        k = min(self.k_leaf_eml, n_raw)
+        top_features = self._top_features_by_corr(self._X_cpu[indices], y_sub, k)
+        idx_gpu = torch.from_numpy(indices).to(device=device, dtype=torch.long)
+        X_sub_raw = self._X_gpu[idx_gpu][:, top_features]
+        y_full = torch.tensor(y_sub, dtype=torch.float32, device=device)
+
+        # Standardize using GLOBAL (fit-time) mean/std — local leaf stats
+        # produce narrow ranges that explode at predict time on same-leaf
+        # test samples lying slightly outside the local window. Global
+        # stats give a consistent transform across all leaves.
+        # Then CLAMP to [-3, 3] so that outliers (heavy-tailed PMLB
+        # features like cpu_small's 10+σ samples) can't push exp(exp(·))
+        # into overflow territory; the snapped grammar allows nested
+        # exponentials and those are catastrophic at |arg| >> 3.
+        assert self._global_mean_gpu is not None and self._global_std_gpu is not None
+        top_features_t = torch.from_numpy(top_features).to(device=device, dtype=torch.long)
+        mean_x = self._global_mean_gpu[top_features_t]
+        std_x = self._global_std_gpu[top_features_t]
+        X_sub = torch.clamp((X_sub_raw - mean_x) / std_x, -3.0, 3.0)
+
+        # Deterministic leaf train/val split. The gate evaluates the EML
+        # fit on held-out samples (25%), not the OLS fit set, so a tree
+        # that happens to memorize a few extreme leaf samples gets
+        # rejected instead of passing the training-SSE threshold.
+        seed = int(indices[0]) if len(indices) else 0
+        rng_leaf = np.random.default_rng(seed)
+        perm = rng_leaf.permutation(n)
+        val_sz = max(n // 4, 5)
+        if n - val_sz < self.min_samples_leaf_eml // 2:
+            return LeafNode(value=constant_value)
+        val_local = perm[:val_sz]
+        fit_local = perm[val_sz:]
+        fit_idx_gpu = torch.from_numpy(fit_local).to(device=device, dtype=torch.long)
+        val_idx_gpu = torch.from_numpy(val_local).to(device=device, dtype=torch.long)
+        X_fit = X_sub[fit_idx_gpu]
+        X_val = X_sub[val_idx_gpu]
+        y_fit = y_full[fit_idx_gpu]
+        y_val = y_full[val_idx_gpu]
+
+        # Evaluate every non-constant tree at (depth=2, k) on fit AND val.
+        descriptor_gpu = get_descriptor_gpu(depth=2, k=k, device=device)
+        feature_mask = get_feature_mask_gpu(depth=2, k=k, device=device)
+        preds_fit = evaluate_trees_triton(descriptor_gpu, X_fit, k)  # (n_trees, n_fit)
+        preds_val = evaluate_trees_triton(descriptor_gpu, X_val, k)  # (n_trees, n_val)
+
+        # Fit OLS per tree on the fit portion only.
+        n_fit = float(X_fit.shape[0])
+        sum_p = preds_fit.sum(dim=1)
+        sum_p2 = (preds_fit * preds_fit).sum(dim=1)
+        sum_y_f = y_fit.sum()
+        sum_py_f = (preds_fit * y_fit.unsqueeze(0)).sum(dim=1)
+
+        det = sum_p2 * n_fit - sum_p * sum_p
+        det_safe = torch.where(det.abs() > 1e-6, det, torch.ones_like(det))
+        eta = (n_fit * sum_py_f - sum_p * sum_y_f) / det_safe
+        bias = (sum_p2 * sum_y_f - sum_p * sum_py_f) / det_safe
+
+        # Evaluate gate on the VAL portion (held out).
+        val_pred = eta.unsqueeze(1) * preds_val + bias.unsqueeze(1)  # (n_trees, n_val)
+        val_res = y_val.unsqueeze(0) - val_pred                       # (n_trees, n_val)
+        val_sse = (val_res * val_res).sum(dim=1)                      # (n_trees,)
+
+        finite_preds = (
+            torch.isfinite(preds_fit).all(dim=1)
+            & torch.isfinite(preds_val).all(dim=1)
+        )
+        finite_coefs = torch.isfinite(eta) & torch.isfinite(bias)
+        valid = feature_mask & finite_preds & finite_coefs & (det.abs() > 1e-6)
+        val_sse = torch.where(valid, val_sse, torch.full_like(val_sse, float("inf")))
+
+        best_idx = int(val_sse.argmin().item())
+        if not bool(valid[best_idx].item()):
+            return LeafNode(value=constant_value)
+
+        best_val_sse = float(val_sse[best_idx].item())
+        constant_val_sse = float(((y_val - y_full.mean()) ** 2).sum().item())
+        # Gate: required fractional VAL-SSE improvement over a constant leaf.
+        if best_val_sse >= constant_val_sse * (1.0 - self.leaf_eml_gain_threshold):
+            return LeafNode(value=constant_value)
+
+        desc_np = get_descriptor_np(2, k)
+        desc_row = desc_np[best_idx]
+        return EmlLeafNode(
+            snapped=SnappedTree(
+                depth=2, k=k,
+                internal_input_count=2, leaf_input_count=4,
+                terminal_choices=tuple(int(v) for v in desc_row),
+            ),
+            feature_subset=tuple(int(v) for v in top_features),
+            feature_mean=tuple(float(v) for v in mean_x.cpu().numpy()),
+            feature_std=tuple(float(v) for v in std_x.cpu().numpy()),
+            eta=float(eta[best_idx].item()),
+            bias=float(bias[best_idx].item()),
+        )
+
     def _best_threshold_histogram(
         self, values: np.ndarray, y: np.ndarray
     ) -> tuple[float, float]:
@@ -429,12 +576,31 @@ class EmlSplitTreeRegressor:
         """Recursively fill ``out[idx]`` by walking the tree in batched fashion.
 
         At each internal node we evaluate the split ONCE on the current
-        `idx` slice and recurse into both children. This is O(depth · splits)
-        torch calls rather than O(n_samples · depth) — a big win during
-        boosting predict.
+        `idx` slice and recurse into both children. At leaves, we either
+        write the stored constant (``LeafNode``) or evaluate the stored
+        elementary expression on the leaf's samples (``EmlLeafNode``).
         """
         if isinstance(node, LeafNode):
             out[idx] = node.value
+            return
+        if isinstance(node, EmlLeafNode):
+            if len(idx) == 0:
+                return
+            X_leaf = X[idx][:, list(node.feature_subset)]
+            # Re-apply the leaf's fit-time standardization AND clamp to the
+            # same [-3, 3] range used during fit. Without this clamp, test
+            # outliers (same-leaf but wider feature range than fit) blow up
+            # via nested-exp in the grammar.
+            mean = np.asarray(node.feature_mean, dtype=np.float64)
+            std = np.asarray(node.feature_std, dtype=np.float64)
+            X_leaf_std = np.clip((X_leaf - mean) / std, -3.0, 3.0)
+            X_t = torch.tensor(X_leaf_std, dtype=torch.float64)
+            desc_t = torch.tensor(
+                [node.snapped.terminal_choices], dtype=torch.int32,
+            )
+            preds = evaluate_trees_torch(desc_t, X_t, node.snapped.k)  # (1, n)
+            vals = preds.squeeze(0).cpu().numpy().astype(np.float64)
+            out[idx] = node.eta * vals + node.bias
             return
         if len(idx) == 0:
             return
