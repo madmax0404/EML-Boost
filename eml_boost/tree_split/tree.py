@@ -409,16 +409,31 @@ class EmlSplitTreeRegressor:
         preds_fit = evaluate_trees_triton(descriptor_gpu, X_fit, k)  # (n_trees, n_fit)
         preds_val = evaluate_trees_triton(descriptor_gpu, X_val, k)  # (n_trees, n_val)
 
-        # Closed-form OLS per tree on the fit portion.
+        # Closed-form OLS per tree on the fit portion. When
+        # self.leaf_eml_ridge > 0 we regularize the slope (η) with a ridge
+        # penalty λ·η². The centered-ridge closed form adds n_fit·λ to the
+        # normal-equation diagonal; on the original sufficient statistics
+        # that means replacing det with det + n_fit·λ. The bias term is
+        # then the conditional-OLS intercept given the shrunk slope:
+        # β = (Σy − η·Σp) / n_fit.
         n_fit = float(X_fit.shape[0])
         sum_p = preds_fit.sum(dim=1)
         sum_p2 = (preds_fit * preds_fit).sum(dim=1)
         sum_y_f = y_fit.sum()
         sum_py_f = (preds_fit * y_fit.unsqueeze(0)).sum(dim=1)
         det = sum_p2 * n_fit - sum_p * sum_p
-        det_safe = torch.where(det.abs() > 1e-6, det, torch.ones_like(det))
+        lam = float(self.leaf_eml_ridge)
+        det_ridged = det + n_fit * lam
+        # Guard against the remaining zero case (λ = 0 and det = 0 — a
+        # genuinely degenerate tree with p_val constant and λ off).
+        det_safe = torch.where(
+            det_ridged.abs() > 1e-6, det_ridged, torch.ones_like(det_ridged)
+        )
         eta = (n_fit * sum_py_f - sum_p * sum_y_f) / det_safe
-        bias = (sum_p2 * sum_y_f - sum_p * sum_py_f) / det_safe
+        if lam == 0.0:
+            bias = (sum_p2 * sum_y_f - sum_p * sum_py_f) / det_safe
+        else:
+            bias = (sum_y_f - eta * sum_p) / n_fit
 
         # Validity mask.
         finite_preds = (

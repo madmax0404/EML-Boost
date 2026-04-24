@@ -366,3 +366,79 @@ def test_leaf_eml_ridge_parameter_accepted():
         leaf_eml_ridge=0.0, random_state=0,
     ).fit(X, y)
     assert np.allclose(m_default.predict(X), m_ridge_zero.predict(X))
+
+
+def test_ridge_shrinks_max_abs_eta_monotonically():
+    """On a clean elementary signal, max |η| across the tree's EML leaves
+    should decrease monotonically as leaf_eml_ridge increases."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+
+    def _collect_etas(node):
+        etas: list[float] = []
+        def walk(n):
+            if isinstance(n, EmlLeafNode):
+                etas.append(abs(float(n.eta)))
+            elif isinstance(n, InternalNode):
+                walk(n.left); walk(n.right)
+        walk(node)
+        return etas
+
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
+
+    max_etas: list[float] = []
+    for ridge in [0.0, 0.1, 1.0, 10.0]:
+        m = EmlSplitTreeRegressor(
+            max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+            k_leaf_eml=1, min_samples_leaf_eml=30,
+            leaf_eml_ridge=ridge, random_state=0,
+        ).fit(X, y)
+        etas = _collect_etas(m._root)
+        max_etas.append(max(etas) if etas else 0.0)
+
+    # Strict monotonic decrease expected; allow equality only when all
+    # ridge settings produce zero EML leaves (shouldn't happen on a
+    # clean exp signal, but be defensive).
+    for i in range(len(max_etas) - 1):
+        assert max_etas[i] >= max_etas[i + 1], (
+            f"non-monotonic: ridge grid gives max|eta| = {max_etas}"
+        )
+
+
+def test_ridge_prevents_blowup_on_heavy_tails():
+    """On features with magnitudes ~1e6, the Experiment-9 failure mode,
+    leaf_eml_ridge=1.0 must keep predictions finite and max |η| bounded."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+
+    def _collect_etas(node):
+        etas: list[float] = []
+        def walk(n):
+            if isinstance(n, EmlLeafNode):
+                etas.append(abs(float(n.eta)))
+            elif isinstance(n, InternalNode):
+                walk(n.left); walk(n.right)
+        walk(node)
+        return etas
+
+    rng = np.random.default_rng(0)
+    # Same magnitudes as 562_cpu_small features in Experiment 9.
+    X = rng.normal(size=(800, 2)) * 1e6
+    y = 0.001 * (X[:, 0] / 1e6) + 0.01 * rng.normal(size=800)
+
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=50, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=50,
+        leaf_eml_ridge=1.0, random_state=0,
+    ).fit(X, y)
+    pred = m.predict(X)
+    assert np.all(np.isfinite(pred))
+    etas = _collect_etas(m._root)
+    if etas:
+        # A 50% shrinkage (ridge=1.0) applied to pre-clamp features of
+        # magnitude ~1 should keep |η| well below 100 on this synthetic.
+        assert max(etas) < 100.0, f"max|eta| = {max(etas):.2f}"
