@@ -613,6 +613,13 @@ class EmlSplitTreeRegressor:
             "alpha": alpha_star,
             "leaf_type": "EmlLeafNode",
         })
+        # Note: cap_leaf was calibrated against the raw η_raw·eml + β_raw
+        # scale, but the stored eta_folded/bias_folded express the blend
+        # α·ȳ + (1−α)·(η_raw·eml + β_raw). For α > 0 the folded prediction
+        # magnitude is strictly smaller than the raw, so the same cap_leaf
+        # is a LOOSER-than-intended bound on the folded form. Experiment 11
+        # tests the gated path only; revisit this if exercising
+        # use_stacked_blend=True with leaf_eml_cap_k > 0.
         return EmlLeafNode(
             snapped=SnappedTree(
                 depth=2, k=k,
