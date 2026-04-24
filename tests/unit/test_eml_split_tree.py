@@ -448,3 +448,48 @@ def test_ridge_prevents_blowup_on_heavy_tails():
         # A 50% shrinkage (ridge=1.0) applied to pre-clamp features of
         # magnitude ~1 should keep |η| well below 100 on this synthetic.
         assert max(etas) < 100.0, f"max|eta| = {max(etas):.2f}"
+
+
+def test_leaf_eml_cap_k_parameter_accepted():
+    """Constructor must accept leaf_eml_cap_k. At 0.0 (default) the
+    predictions must be identical to a regressor built without the
+    parameter — pins the backward-compat story."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
+
+    m_default = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30, random_state=0,
+    ).fit(X, y)
+    m_cap_zero = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        leaf_eml_cap_k=0.0, random_state=0,
+    ).fit(X, y)
+    assert np.allclose(m_default.predict(X), m_cap_zero.predict(X))
+
+
+def test_eml_leaf_node_default_cap_is_inf():
+    """EmlLeafNode constructed without `cap` kwarg should have cap = inf,
+    so predict-time clipping is a no-op for backward-compat with any
+    previously-fitted trees."""
+    import math
+    from eml_boost.symbolic.snap import SnappedTree
+    node = EmlLeafNode(
+        snapped=SnappedTree(
+            depth=2, k=1,
+            internal_input_count=2, leaf_input_count=4,
+            terminal_choices=(0, 0, 0, 0, 0, 0),
+        ),
+        feature_subset=(0,),
+        feature_mean=(0.0,),
+        feature_std=(1.0,),
+        eta=1.0,
+        bias=0.0,
+    )
+    assert math.isinf(node.cap)
+    assert node.cap > 0.0

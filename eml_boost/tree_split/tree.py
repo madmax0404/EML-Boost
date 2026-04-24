@@ -84,6 +84,7 @@ class EmlSplitTreeRegressor:
         min_samples_leaf_eml: int = 50,
         leaf_eml_gain_threshold: float = 0.05,
         leaf_eml_ridge: float = 0.0,
+        leaf_eml_cap_k: float = 0.0,
         use_stacked_blend: bool = False,
         random_state: int | None = None,
     ):
@@ -106,6 +107,7 @@ class EmlSplitTreeRegressor:
         self.min_samples_leaf_eml = min_samples_leaf_eml
         self.leaf_eml_gain_threshold = leaf_eml_gain_threshold
         self.leaf_eml_ridge = leaf_eml_ridge
+        self.leaf_eml_cap_k = leaf_eml_cap_k
         self.use_stacked_blend = use_stacked_blend
         self.random_state = random_state
 

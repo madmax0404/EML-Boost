@@ -52,6 +52,11 @@ class EmlLeafNode:
     cpu_small's values in the millions). The ``eta`` and ``bias`` are
     closed-form-OLS-optimal scalars; the snapped tree itself has no free
     continuous parameters.
+
+    The ``cap`` field (default ``inf`` = no cap) bounds the per-sample
+    prediction magnitude to ``[-cap, +cap]`` at predict time. Set at
+    fit time from ``leaf_eml_cap_k * max|y_leaf|`` when the user enables
+    the cap via the ``leaf_eml_cap_k`` hyperparameter on the regressor.
     """
 
     snapped: SnappedTree
@@ -60,6 +65,7 @@ class EmlLeafNode:
     feature_std: tuple[float, ...]
     eta: float
     bias: float
+    cap: float = float("inf")
 
 
 @dataclass
