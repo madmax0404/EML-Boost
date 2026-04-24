@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, stdev
 
@@ -284,6 +284,10 @@ def main() -> int:
     ax1.set_ylabel("test RMSE (mean ± std over 3 seeds)")
     ax1.set_title(f"Experiment 9: stacked-blend vs gate, {len(SEEDS)} seeds")
     ax1.legend(); ax1.grid(True, alpha=0.3, axis="y")
+
+    for n in ordered:
+        if agg[(n, "xgboost")]["rmse_mean"] == 0.0:
+            raise ValueError(f"XGBoost RMSE is 0 on {n}; cannot compute ratio")
 
     ratios_off = [agg[(n, "split_boost_blend_off")]["rmse_mean"]
                   / agg[(n, "xgboost")]["rmse_mean"] for n in ordered]
