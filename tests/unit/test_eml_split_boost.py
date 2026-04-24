@@ -42,13 +42,20 @@ def test_boosting_reduces_residual():
 
 def test_early_stopping_triggers():
     """With tight patience, boosting should stop well before max_rounds
-    once the held-out val MSE stops improving."""
+    once the held-out val MSE stops improving.
+
+    k_leaf_eml=0 disables EML leaves so the test is about early-stopping
+    behavior on a linear signal, not leaf-fit behavior. With the default
+    min_samples_leaf_eml=30 and depth-3 trees on 240 train samples,
+    leaves land right at the EML threshold and would otherwise stay
+    productive for all 200 rounds."""
     rng = np.random.default_rng(0)
     X = rng.uniform(-1, 1, size=(300, 2))
     y = X[:, 0]  # linear, trivially fit in a few rounds
     m = EmlSplitBoostRegressor(
         max_rounds=200, max_depth=3, learning_rate=0.1,
-        n_eml_candidates=0, patience=5, val_fraction=0.2, random_state=0,
+        n_eml_candidates=0, k_leaf_eml=0, patience=5,
+        val_fraction=0.2, random_state=0,
     ).fit(X, y)
     assert m.n_rounds < 200
     # Should have logged at least one val_mse entry

@@ -81,7 +81,7 @@ class EmlSplitTreeRegressor:
         histogram_min_n: int = 500,
         use_gpu: bool = True,
         k_leaf_eml: int = 1,
-        min_samples_leaf_eml: int = 50,
+        min_samples_leaf_eml: int = 30,
         leaf_eml_gain_threshold: float = 0.05,
         leaf_eml_ridge: float = 0.0,
         leaf_eml_cap_k: float = 2.0,
