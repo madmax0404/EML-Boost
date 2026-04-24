@@ -48,6 +48,12 @@ _SNAP_TOL = 1e-6
 # we fall back to the softmax path.
 _EXHAUSTIVE_THRESHOLD = 50_000
 
+# Cap on the inner-val subsample used to rank candidate trees during
+# exhaustive search. 500 points is enough to MSE-rank 6k+ candidates with
+# stable ordering, while keeping per-round runtime independent of dataset
+# size (important for datasets with thousands of training rows).
+_EXHAUSTIVE_EVAL_CAP = 500
+
 
 @dataclass
 class EmlWeakLearner:
@@ -117,20 +123,143 @@ def _enumerate_snapped_trees(depth: int, k: int):
             )
 
 
+def _exhaustive_search(
+    X_iv: np.ndarray,
+    y_iv: np.ndarray,
+    depth: int,
+    k: int,
+    feature_names: tuple[str, ...],
+) -> tuple[SnappedTree | None, sp.Expr | None, float]:
+    """Dispatch to the GPU path at depth=2; else the CPU sympy loop."""
+    if depth == 2 and torch.cuda.is_available():
+        try:
+            return _exhaustive_search_gpu(X_iv, y_iv, k, feature_names)
+        except Exception:
+            pass  # fall through to CPU
+    return _exhaustive_search_cpu(X_iv, y_iv, depth, k, feature_names)
+
+
+def _exhaustive_search_cpu(
+    X_iv: np.ndarray,
+    y_iv: np.ndarray,
+    depth: int,
+    k: int,
+    feature_names: tuple[str, ...],
+) -> tuple[SnappedTree | None, sp.Expr | None, float]:
+    """Per-tree sympy build + lambdify + numpy eval fallback."""
+    symbols = [sp.Symbol(name) for name in feature_names]
+    best_mse = float("inf")
+    best_snapped: SnappedTree | None = None
+    best_formula: sp.Expr | None = None
+
+    for snapped in _enumerate_snapped_trees(depth, k):
+        formula = snapped_to_sympy(snapped, feature_names)
+        formula = snap_constants(formula)
+        if not formula.free_symbols:
+            continue
+        try:
+            f = sp.lambdify(symbols, formula, modules=["numpy"])
+            iv_pred = np.asarray(
+                f(*[X_iv[:, i] for i in range(k)]),
+                dtype=np.float64,
+            )
+            if iv_pred.ndim == 0:
+                iv_pred = np.full(len(X_iv), float(iv_pred))
+        except Exception:
+            continue
+        if not np.all(np.isfinite(iv_pred)):
+            continue
+        mse = float(np.mean((iv_pred - y_iv) ** 2))
+        if mse < best_mse:
+            best_mse = mse
+            best_snapped = snapped
+            best_formula = formula
+
+    return best_snapped, best_formula, best_mse
+
+
+def _exhaustive_search_gpu(
+    X_iv: np.ndarray,
+    y_iv: np.ndarray,
+    k: int,
+    feature_names: tuple[str, ...],
+) -> tuple[SnappedTree | None, sp.Expr | None, float]:
+    """Evaluate every depth-2 tree in one Triton kernel launch; pick min-MSE."""
+    from eml_boost._triton_exhaustive import (
+        evaluate_trees_triton,
+        get_descriptor_gpu,
+        get_descriptor_np,
+        get_feature_mask_gpu,
+    )
+
+    device = torch.device("cuda")
+    X_iv_gpu = torch.tensor(X_iv, dtype=torch.float32, device=device)
+    y_iv_gpu = torch.tensor(y_iv, dtype=torch.float32, device=device)
+
+    descriptor = get_descriptor_gpu(depth=2, k=k, device=device)  # (n_trees, 6) int32
+    feature_mask = get_feature_mask_gpu(depth=2, k=k, device=device)  # (n_trees,) bool
+
+    preds = evaluate_trees_triton(descriptor, X_iv_gpu, k)  # (n_trees, n_samples) fp32
+
+    finite = torch.isfinite(preds).all(dim=1)  # (n_trees,)
+    valid = finite & feature_mask
+
+    diff = preds - y_iv_gpu.unsqueeze(0)
+    mse_gpu = (diff * diff).mean(dim=1)  # (n_trees,)
+    # Sentinel for invalid trees so they can't win argmin.
+    mse_gpu = torch.where(
+        valid,
+        mse_gpu,
+        torch.full_like(mse_gpu, float("inf")),
+    )
+
+    best_idx = int(mse_gpu.argmin().item())
+    if not bool(valid[best_idx].item()):
+        return None, None, float("inf")
+
+    best_mse = float(mse_gpu[best_idx].item())
+
+    desc_np = get_descriptor_np(2, k)
+    best_choices = tuple(int(v) for v in desc_np[best_idx])
+    best_snapped = SnappedTree(
+        depth=2,
+        k=k,
+        internal_input_count=2,
+        leaf_input_count=4,
+        terminal_choices=best_choices,
+    )
+    best_formula = snapped_to_sympy(best_snapped, feature_names)
+    best_formula = snap_constants(best_formula)
+    return best_snapped, best_formula, best_mse
+
+
 def _fit_eml_tree_exhaustive(
     X: np.ndarray,
     y: np.ndarray,
     depth: int,
     k: int,
     random_state: int | None,
+    standardize: bool = True,
 ) -> EmlWeakLearner:
     """Enumerate every discrete tree and pick the one with best inner-val MSE.
 
-    Exhaustive search operates directly on raw (non-standardized) features.
-    Standardization is only needed for the softmax path's numerical stability;
-    exhaustive has no such concern, and skipping it lets the stored formula
-    be expressed in the literal feature coordinates (e.g. `exp(x_0)` rather
-    than `exp(x_0 / σ)`). This fix is what makes extrapolation correct.
+    When ``standardize=True`` (default, best for real tabular data with
+    arbitrary feature magnitudes), features are z-scored before the search
+    and the stored formula is un-standardized via sympy substitution so it
+    can be applied to raw inputs. Trade-off: recovered-formula extrapolation
+    follows an (x − μ)/σ slope that differs from the literal function form
+    on targets with `x` far outside the training range.
+
+    When ``standardize=False``, features go directly into the exhaustive
+    search in raw coordinates; the stored formula is in literal feature
+    symbols. Correct for synthetic extrapolation benchmarks where features
+    are pre-normalized (Experiments 4 and 6); unsafe for real-scale data
+    because `exp()` of large feature values overflows even with clamping.
+
+    For depth=2 the GPU (Triton) path evaluates all candidate trees in one
+    kernel launch per round, eliminating per-tree sympy construction and
+    Python dispatch. Falls back to CPU sympy enumeration if CUDA is
+    unavailable or the configuration lies outside the GPU path's support.
     """
     rng = np.random.default_rng(random_state)
 
@@ -142,45 +271,43 @@ def _fit_eml_tree_exhaustive(
     feature_names = tuple(f"x_{int(i)}" for i in feature_idx)
     X_sel = X[:, feature_idx]
 
-    # Sentinel mean/std — predict() will do (X − 0)/1 = X, preserving raw scale.
-    mean = np.zeros(k, dtype=np.float64)
-    std = np.ones(k, dtype=np.float64)
+    if standardize:
+        mean = X_sel.mean(axis=0)
+        std = X_sel.std(axis=0) + 1e-12
+        X_for_search = (X_sel - mean) / std
+    else:
+        mean = np.zeros(k, dtype=np.float64)
+        std = np.ones(k, dtype=np.float64)
+        X_for_search = X_sel
 
-    # Inner val split on raw features
-    n = len(X_sel)
+    # Inner val split.
+    n = len(X_for_search)
     perm = rng.permutation(n)
-    val_sz = max(int(0.2 * n), 1)
+    val_sz = min(max(int(0.2 * n), 1), _EXHAUSTIVE_EVAL_CAP)
     val_idx = perm[:val_sz]
-    X_iv_np = X_sel[val_idx]
+    X_iv_np = X_for_search[val_idx]
     y_iv_np = y[val_idx]
 
-    symbols = [sp.Symbol(name) for name in feature_names]
-    best_mse = float("inf")
-    best_snapped: SnappedTree | None = None
-    best_formula: sp.Expr | None = None
+    best_snapped, best_formula_std, best_mse = _exhaustive_search(
+        X_iv_np, y_iv_np, depth, k, feature_names,
+    )
 
-    for snapped in _enumerate_snapped_trees(depth, k):
-        formula = snapped_to_sympy(snapped, feature_names)
-        formula = snap_constants(formula)
-        if not formula.free_symbols:
-            continue  # dead-branch: all features unreferenced
-        try:
-            f = sp.lambdify(symbols, formula, modules=["numpy"])
-            iv_pred = np.asarray(
-                f(*[X_iv_np[:, i] for i in range(k)]),
-                dtype=np.float64,
-            )
-            if iv_pred.ndim == 0:
-                iv_pred = np.full(len(X_iv_np), float(iv_pred))
-        except Exception:
-            continue
-        if not np.all(np.isfinite(iv_pred)):
-            continue
-        mse = float(np.mean((iv_pred - y_iv_np) ** 2))
-        if mse < best_mse:
-            best_mse = mse
-            best_snapped = snapped
-            best_formula = formula
+    if best_snapped is not None and best_formula_std is not None and standardize:
+        # Un-standardize: substitute x_i → (x_i − μ)/σ so the stored formula
+        # can be applied to raw input values. `predict()` still uses the
+        # trained_module with standardized features for the numeric path;
+        # this substitution only affects the reported symbolic `formula`.
+        # NOTE: deliberately NOT calling `sp.simplify` here — it can spend
+        # seconds normalizing the resulting fractions per round, which
+        # dominates total runtime for many-round real-data fits.
+        sub_map = {
+            sp.Symbol(name): (sp.Symbol(name) - float(mu)) / float(sigma)
+            for name, mu, sigma in zip(feature_names, mean, std)
+        }
+        best_formula = best_formula_std.xreplace(sub_map)
+        best_formula = snap_constants(best_formula)
+    else:
+        best_formula = best_formula_std
 
     if best_snapped is None or best_formula is None:
         raise RuntimeError(
@@ -188,12 +315,11 @@ def _fit_eml_tree_exhaustive(
             "All candidates were constants or produced non-finite outputs."
         )
 
-    # No un-standardization needed: formula is already in raw feature coords.
-
-    # Build a MasterFormula with one-hot logits matching the chosen tree,
-    # so EmlWeakLearner.predict can reuse the existing torch path. The module
-    # will see raw X (since feature_mean=0, feature_std=1), matching the
-    # formula's raw-coordinate definition.
+    # Build a MasterFormula with one-hot logits matching the chosen tree.
+    # `predict` will apply (X − mean)/std before feeding the module, so when
+    # standardize=True the module sees standardized inputs and produces
+    # outputs matching `best_formula_std`; when standardize=False the
+    # sentinel mean=0, std=1 leaves the inputs raw.
     mf = MasterFormula(depth=depth, k=k)
     with torch.no_grad():
         for logit_idx, choice in enumerate(best_snapped.terminal_choices):
@@ -206,8 +332,8 @@ def _fit_eml_tree_exhaustive(
         trained_module=mf,
         snapped=best_snapped,
         snap_ok=True,
-        formula=best_formula,       # already raw-coord; no substitution needed
-        formula_std=best_formula,   # identical in this path — no standardization
+        formula=best_formula,        # un-standardized (if applicable) — for display
+        formula_std=best_formula_std,  # standardized — for BIC params_count
         feature_names=feature_names,
         feature_idx=feature_idx,
         feature_mean=mean,

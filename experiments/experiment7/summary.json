@@ -1,0 +1,104 @@
+{
+  "config": {
+    "max_rounds": 200,
+    "depth": 6,
+    "depth_eml": 2,
+    "k": 3,
+    "learning_rate": 0.1,
+    "test_size": 0.2,
+    "seed": 0
+  },
+  "results": {
+    "192_vineyard": {
+      "n_samples": 52,
+      "n_features": 2,
+      "hybrid_rmse": 1.9725773378069607,
+      "lightgbm_rmse": 2.394869161744873,
+      "xgboost_rmse": 3.031196594024718,
+      "hybrid_time": 4.696964740753174,
+      "lightgbm_time": 0.18660736083984375,
+      "xgboost_time": 0.21093988418579102,
+      "hybrid_vs_xgb_ratio": 0.6507586283566784,
+      "hybrid_coverage": 1.0,
+      "hybrid_formula": "0.225381896937725*exp(0.465697472127703*x_0) + 0.0303160458309276*exp(0.377140720908113*x_1)"
+    },
+    "210_cloud": {
+      "n_samples": 108,
+      "n_features": 5,
+      "hybrid_rmse": NaN,
+      "lightgbm_rmse": 0.7733878259954807,
+      "xgboost_rmse": 0.6548276624528223,
+      "hybrid_time": 0.0,
+      "lightgbm_time": 0.18602252006530762,
+      "xgboost_time": 0.17982006072998047,
+      "hybrid_vs_xgb_ratio": NaN,
+      "hybrid_coverage": null,
+      "hybrid_formula": null
+    },
+    "523_analcatdata_neavote": {
+      "n_samples": 100,
+      "n_features": 2,
+      "hybrid_rmse": 0.7355712669842597,
+      "lightgbm_rmse": 0.7221038321376677,
+      "xgboost_rmse": 0.7684598681048703,
+      "hybrid_time": 2.593865156173706,
+      "lightgbm_time": 0.19628548622131348,
+      "xgboost_time": 0.0895395278930664,
+      "hybrid_vs_xgb_ratio": 0.957201927536283,
+      "hybrid_coverage": 6.539213615042172e-14,
+      "hybrid_formula": null
+    },
+    "557_analcatdata_apnea1": {
+      "n_samples": 475,
+      "n_features": 3,
+      "hybrid_rmse": 1463.7020412503305,
+      "lightgbm_rmse": 1375.555101787204,
+      "xgboost_rmse": 1137.8163504544639,
+      "hybrid_time": 9.110871076583862,
+      "lightgbm_time": 0.22121858596801758,
+      "xgboost_time": 0.15321707725524902,
+      "hybrid_vs_xgb_ratio": 1.2864132605105403,
+      "hybrid_coverage": 0.0,
+      "hybrid_formula": "22.3797366132162*exp(0.702865564714458*x_0) - 9.50529711266541*exp(0.709075616188831*x_0) - 14.9338547609013*exp(0.710039537476913*x_0) - 66.9344385231122*exp(0.711436448469891*x_0) - 20.9226172279939 ...[truncated]"
+    },
+    "529_pollen": {
+      "n_samples": 3848,
+      "n_features": 4,
+      "hybrid_rmse": 2.9974923540605403,
+      "lightgbm_rmse": 1.5999685134248525,
+      "xgboost_rmse": 1.611287235328607,
+      "hybrid_time": 22.225486040115356,
+      "lightgbm_time": 0.2969655990600586,
+      "xgboost_time": 0.259169340133667,
+      "hybrid_vs_xgb_ratio": 1.8603091294577467,
+      "hybrid_coverage": 1.0,
+      "hybrid_formula": "0.498844274519589*exp(0.193288145667808*x_1) + 0.206075648679047*exp(0.0985320358879107*x_3) + 0.15045771488949*log(E - log(0.0971165550619693*x_3 + 0.00215327917502905)) - 0.056098361944828*log(E - l ...[truncated]"
+    },
+    "562_cpu_small": {
+      "n_samples": 8192,
+      "n_features": 12,
+      "hybrid_rmse": 4.865247009315092,
+      "lightgbm_rmse": 3.0734315606039413,
+      "xgboost_rmse": 3.087876827954788,
+      "hybrid_time": 26.88806128501892,
+      "lightgbm_time": 0.3361802101135254,
+      "xgboost_time": 0.2886955738067627,
+      "hybrid_vs_xgb_ratio": 1.5755962042493517,
+      "hybrid_coverage": 0.5659543595967542,
+      "hybrid_formula": "0.160746737623097*exp(2.37824575978778e-6*x_11) - 0.0231462050411422*log(E - log(0.0168413565156762*x_0 - 0.345918515500133)) - 0.124114863092998*log(E - log(0.0175851358501252*x_0 - 0.352894260872089 ...[truncated]"
+    },
+    "564_fried": {
+      "n_samples": 40768,
+      "n_features": 10,
+      "hybrid_rmse": 1.7708963436123266,
+      "lightgbm_rmse": 1.0716989104863703,
+      "xgboost_rmse": 1.0767128856148442,
+      "hybrid_time": 56.47871398925781,
+      "lightgbm_time": 0.4881412982940674,
+      "xgboost_time": 0.2650926113128662,
+      "hybrid_vs_xgb_ratio": 1.6447247611428715,
+      "hybrid_coverage": 0.6724830255776478,
+      "hybrid_formula": "0.140221306243288*exp(3.46708479608301*x_0) + 0.319806623406301*exp(3.46361954375328*x_3) + 0.132508491383392*exp(3.46264474696014*x_4) + 0.0460669755669195*log(E - log(3.46735793128577*x_0 - 1.728953 ...[truncated]"
+    }
+  }
+}
