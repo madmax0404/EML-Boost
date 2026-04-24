@@ -84,9 +84,9 @@ Blend-on `_leaf_stats` aggregates (`experiments/experiment9/leaf_stats.json`):
 | 192_vineyard | 0 | — | — |
 | 210_cloud | 0 | — | — |
 | 523_analcatdata_neavote | 0 | — | — |
-| 557_analcatdata_apnea1 | 133 | 72% | 0.44 |
+| 557_analcatdata_apnea1 | 133 | 73% | 0.44 |
 | 529_pollen | 1,629 | 77% | 0.30 |
-| 562_cpu_small | 3,848 | 73% | 0.27 |
+| 562_cpu_small | 3,848 | 70% | 0.27 |
 | 564_fried | 11,363 | 83% | 0.23 |
 
 Observations:

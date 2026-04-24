@@ -1,5 +1,7 @@
 # Stacked-Blend Leaves for EML-SplitBoost (Experiment 9)
 
+> **Post-experiment note (2026-04-24):** Experiment 9's multi-seed benchmark triggered the spec's negative-outcome criterion (catastrophic explosions on `562_cpu_small` and `564_fried`). The `use_stacked_blend` default was reverted to `False`. The blended code path and tests are preserved for future targeted experiments. See `experiments/experiment9/report.md` for the verdict. The design below describes the *as-proposed* state, not the landing state.
+
 **Date:** 2026-04-24
 **Context:** Follows Experiment 8. EML leaves (Phase 4) moved the PMLB 7-dataset benchmark from 4/7 to 5/7 outright wins against XGBoost, but regressed `562_cpu_small` from ratio 0.81 → 0.90 and left two datasets (`210_cloud`, `557_analcatdata_apnea1`) above the 10% band. The current leaf fit is a **binary accept/reject gate**: EML leaf if val-SSE improvement > 5%, else constant. The hypothesis tested here is that a **soft blend** — `prediction = α · constant + (1 − α) · (η · eml(x) + β)` with α fit on a held-out val split — recovers the cpu_small regression without giving up any existing wins, and reduces seed-to-seed variance.
 

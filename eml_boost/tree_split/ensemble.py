@@ -44,6 +44,11 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
     use_gpu : bool
         Route EML candidate evaluation through the Triton kernel if CUDA is
         available; falls back to torch CPU otherwise.
+    use_stacked_blend : bool
+        Threads through to each round's ``EmlSplitTreeRegressor``. If True,
+        EML leaves use a val-fit convex blend instead of the binary gate.
+        Default False per Experiment 9's negative-outcome verdict on
+        heavy-tailed datasets (see ``experiments/experiment9/report.md``).
     patience : int or None
         Early-stopping patience on an inner validation set. Set to None
         (or 0) to run the full `max_rounds`.

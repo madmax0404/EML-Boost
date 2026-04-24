@@ -59,6 +59,12 @@ class EmlSplitTreeRegressor:
         the top-k_eml by residual correlation and samples expressions over them.
     eml_depth : int
         Depth of the EML grammar for the sampling pool. Currently only 2.
+    use_stacked_blend : bool
+        If True, EML leaves are fit as a val-fit convex blend
+        ``α·ȳ + (1−α)·(η·eml + β)`` with no minimum-gain gate. If False
+        (default), the legacy binary accept/reject gate using
+        ``leaf_eml_gain_threshold`` is used. See
+        ``experiments/experiment9/report.md`` for why the default is False.
     random_state : int or None
         Seed for the sampler.
     """
