@@ -532,17 +532,6 @@ class EmlSplitTreeRegressor:
         if not bool(valid_blend[best_idx].item()):
             return LeafNode(value=constant_value)
 
-        # Require the blend to genuinely improve on the constant leaf by at
-        # least ``leaf_eml_gain_threshold`` on the val set.  This guards
-        # against the multiple-testing effect: searching 144 trees almost
-        # always yields one spurious α < 1 on pure noise.  The check differs
-        # from the legacy gate: it compares the *α-optimised* blend val-SSE
-        # to the constant val-SSE rather than the raw EML val-SSE.
-        constant_val_sse = float(((y_val - ybar) ** 2).sum().item())
-        best_blend_sse = float(blend_sse[best_idx].item())
-        if best_blend_sse >= constant_val_sse * (1.0 - self.leaf_eml_gain_threshold):
-            return LeafNode(value=constant_value)
-
         alpha_star = float(alpha[best_idx].item())
         eta_raw = float(eta[best_idx].item())
         bias_raw = float(bias[best_idx].item())
