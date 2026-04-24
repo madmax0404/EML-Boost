@@ -77,6 +77,7 @@ class EmlSplitTreeRegressor:
         k_leaf_eml: int = 1,
         min_samples_leaf_eml: int = 50,
         leaf_eml_gain_threshold: float = 0.05,
+        use_stacked_blend: bool = False,
         random_state: int | None = None,
     ):
         if eml_depth != 2:
@@ -97,6 +98,7 @@ class EmlSplitTreeRegressor:
         self.k_leaf_eml = k_leaf_eml
         self.min_samples_leaf_eml = min_samples_leaf_eml
         self.leaf_eml_gain_threshold = leaf_eml_gain_threshold
+        self.use_stacked_blend = use_stacked_blend
         self.random_state = random_state
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "EmlSplitTreeRegressor":
@@ -331,13 +333,18 @@ class EmlSplitTreeRegressor:
         """Build a leaf node. Tries an EML expression leaf if enabled and the
         sample count is large enough; falls back to a constant leaf otherwise.
 
-        The EML leaf is accepted only if its closed-form-OLS SSE improvement
-        over the constant leaf exceeds ``leaf_eml_gain_threshold`` (fractional).
+        Two tree-selection policies are available behind the
+        ``use_stacked_blend`` flag:
+          - False: binary accept/reject gate on val-SSE improvement over a
+            constant leaf (legacy).
+          - True: val-fit convex blend between constant and EML predictions;
+            α selected in closed form per candidate tree; tree chosen by
+            α-optimized val-SSE.
         """
         n = len(y_sub)
         constant_value = float(y_sub.mean()) if n > 0 else 0.0
 
-        # Gates for attempting an EML leaf.
+        # Early-out gates.
         eml_disabled = self.k_leaf_eml <= 0
         too_small = n < self.min_samples_leaf_eml
         no_gpu = self._X_gpu is None or self._device is None
@@ -354,24 +361,14 @@ class EmlSplitTreeRegressor:
         X_sub_raw = self._X_gpu[idx_gpu][:, top_features]
         y_full = torch.tensor(y_sub, dtype=torch.float32, device=device)
 
-        # Standardize using GLOBAL (fit-time) mean/std — local leaf stats
-        # produce narrow ranges that explode at predict time on same-leaf
-        # test samples lying slightly outside the local window. Global
-        # stats give a consistent transform across all leaves.
-        # Then CLAMP to [-3, 3] so that outliers (heavy-tailed PMLB
-        # features like cpu_small's 10+σ samples) can't push exp(exp(·))
-        # into overflow territory; the snapped grammar allows nested
-        # exponentials and those are catastrophic at |arg| >> 3.
+        # Global-stat standardization + clamp to [-3, 3].
         assert self._global_mean_gpu is not None and self._global_std_gpu is not None
         top_features_t = torch.from_numpy(top_features).to(device=device, dtype=torch.long)
         mean_x = self._global_mean_gpu[top_features_t]
         std_x = self._global_std_gpu[top_features_t]
         X_sub = torch.clamp((X_sub_raw - mean_x) / std_x, -3.0, 3.0)
 
-        # Deterministic leaf train/val split. The gate evaluates the EML
-        # fit on held-out samples (25%), not the OLS fit set, so a tree
-        # that happens to memorize a few extreme leaf samples gets
-        # rejected instead of passing the training-SSE threshold.
+        # Deterministic 75/25 leaf-local split.
         seed = int(indices[0]) if len(indices) else 0
         rng_leaf = np.random.default_rng(seed)
         perm = rng_leaf.permutation(n)
@@ -387,35 +384,61 @@ class EmlSplitTreeRegressor:
         y_fit = y_full[fit_idx_gpu]
         y_val = y_full[val_idx_gpu]
 
-        # Evaluate every non-constant tree at (depth=2, k) on fit AND val.
+        # Batched evaluation of all 144 depth-2 candidate trees.
         descriptor_gpu = get_descriptor_gpu(depth=2, k=k, device=device)
         feature_mask = get_feature_mask_gpu(depth=2, k=k, device=device)
         preds_fit = evaluate_trees_triton(descriptor_gpu, X_fit, k)  # (n_trees, n_fit)
         preds_val = evaluate_trees_triton(descriptor_gpu, X_val, k)  # (n_trees, n_val)
 
-        # Fit OLS per tree on the fit portion only.
+        # Closed-form OLS per tree on the fit portion.
         n_fit = float(X_fit.shape[0])
         sum_p = preds_fit.sum(dim=1)
         sum_p2 = (preds_fit * preds_fit).sum(dim=1)
         sum_y_f = y_fit.sum()
         sum_py_f = (preds_fit * y_fit.unsqueeze(0)).sum(dim=1)
-
         det = sum_p2 * n_fit - sum_p * sum_p
         det_safe = torch.where(det.abs() > 1e-6, det, torch.ones_like(det))
         eta = (n_fit * sum_py_f - sum_p * sum_y_f) / det_safe
         bias = (sum_p2 * sum_y_f - sum_p * sum_py_f) / det_safe
 
-        # Evaluate gate on the VAL portion (held out).
-        val_pred = eta.unsqueeze(1) * preds_val + bias.unsqueeze(1)  # (n_trees, n_val)
-        val_res = y_val.unsqueeze(0) - val_pred                       # (n_trees, n_val)
-        val_sse = (val_res * val_res).sum(dim=1)                      # (n_trees,)
-
+        # Validity mask.
         finite_preds = (
             torch.isfinite(preds_fit).all(dim=1)
             & torch.isfinite(preds_val).all(dim=1)
         )
         finite_coefs = torch.isfinite(eta) & torch.isfinite(bias)
         valid = feature_mask & finite_preds & finite_coefs & (det.abs() > 1e-6)
+
+        ctx = dict(
+            y_full=y_full, y_val=y_val, eta=eta, bias=bias,
+            preds_val=preds_val, valid=valid, k=k, top_features=top_features,
+            mean_x=mean_x, std_x=std_x, constant_value=constant_value,
+        )
+        if self.use_stacked_blend:
+            return self._select_leaf_blended(**ctx)
+        return self._select_leaf_gated(**ctx)
+
+    def _select_leaf_gated(
+        self,
+        *,
+        y_full: "torch.Tensor",
+        y_val: "torch.Tensor",
+        eta: "torch.Tensor",
+        bias: "torch.Tensor",
+        preds_val: "torch.Tensor",
+        valid: "torch.Tensor",
+        k: int,
+        top_features: np.ndarray,
+        mean_x: "torch.Tensor",
+        std_x: "torch.Tensor",
+        constant_value: float,
+    ) -> Node:
+        """Legacy binary-gate tree selection. Picks the tree with smallest
+        val-SSE on the pure-EML prediction; accepts it only if val-SSE beats
+        the constant-leaf val-SSE by ``leaf_eml_gain_threshold``."""
+        val_pred = eta.unsqueeze(1) * preds_val + bias.unsqueeze(1)
+        val_res = y_val.unsqueeze(0) - val_pred
+        val_sse = (val_res * val_res).sum(dim=1)
         val_sse = torch.where(valid, val_sse, torch.full_like(val_sse, float("inf")))
 
         best_idx = int(val_sse.argmin().item())
@@ -424,7 +447,6 @@ class EmlSplitTreeRegressor:
 
         best_val_sse = float(val_sse[best_idx].item())
         constant_val_sse = float(((y_val - y_full.mean()) ** 2).sum().item())
-        # Gate: required fractional VAL-SSE improvement over a constant leaf.
         if best_val_sse >= constant_val_sse * (1.0 - self.leaf_eml_gain_threshold):
             return LeafNode(value=constant_value)
 
@@ -442,6 +464,11 @@ class EmlSplitTreeRegressor:
             eta=float(eta[best_idx].item()),
             bias=float(bias[best_idx].item()),
         )
+
+    def _select_leaf_blended(self, **ctx) -> Node:
+        """Stacked-blend tree selection (Task 2). Temporarily routes to the
+        gated path so the refactor in Task 1 is behavior-preserving."""
+        return self._select_leaf_gated(**ctx)
 
     def _best_threshold_histogram(
         self, values: np.ndarray, y: np.ndarray

@@ -216,3 +216,22 @@ def test_internal_node_stores_either_split_kind():
     ).fit(X, y)
     assert isinstance(m._root, InternalNode)
     assert isinstance(m._root.split, (RawSplit, EmlSplit))
+
+
+def test_use_stacked_blend_false_matches_current_behavior():
+    """With `use_stacked_blend=False` (and the rest of the config identical),
+    the regressor should behave exactly like the current gated implementation:
+    pure-noise training data should leave most leaves as constants."""
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = rng.normal(size=800)
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=50, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=50,
+        leaf_eml_gain_threshold=0.05,
+        use_stacked_blend=False,
+        random_state=0,
+    ).fit(X, y)
+    n_eml = _count_eml_leaves(m._root)
+    n_total = _count_leaves(m._root)
+    assert n_eml < 0.4 * n_total
