@@ -361,14 +361,24 @@ class EmlSplitTreeRegressor:
         X_sub_raw = self._X_gpu[idx_gpu][:, top_features]
         y_full = torch.tensor(y_sub, dtype=torch.float32, device=device)
 
-        # Global-stat standardization + clamp to [-3, 3].
+        # Standardize using GLOBAL (fit-time) mean/std — local leaf stats
+        # produce narrow ranges that explode at predict time on same-leaf
+        # test samples lying slightly outside the local window. Global
+        # stats give a consistent transform across all leaves.
+        # Then CLAMP to [-3, 3] so that outliers (heavy-tailed PMLB
+        # features like cpu_small's 10+σ samples) can't push exp(exp(·))
+        # into overflow territory; the snapped grammar allows nested
+        # exponentials and those are catastrophic at |arg| >> 3.
         assert self._global_mean_gpu is not None and self._global_std_gpu is not None
         top_features_t = torch.from_numpy(top_features).to(device=device, dtype=torch.long)
         mean_x = self._global_mean_gpu[top_features_t]
         std_x = self._global_std_gpu[top_features_t]
         X_sub = torch.clamp((X_sub_raw - mean_x) / std_x, -3.0, 3.0)
 
-        # Deterministic 75/25 leaf-local split.
+        # Deterministic leaf train/val split. The val portion (25%) is held
+        # out from the per-tree OLS fit so the tree-selection policy
+        # (either the legacy gate or the Task 2 blend) can evaluate
+        # generalization rather than training fit.
         seed = int(indices[0]) if len(indices) else 0
         rng_leaf = np.random.default_rng(seed)
         perm = rng_leaf.permutation(n)

@@ -222,6 +222,9 @@ def test_use_stacked_blend_false_matches_current_behavior():
     """With `use_stacked_blend=False` (and the rest of the config identical),
     the regressor should behave exactly like the current gated implementation:
     pure-noise training data should leave most leaves as constants."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
     rng = np.random.default_rng(0)
     X = rng.uniform(-1, 1, size=(800, 2))
     y = rng.normal(size=800)
@@ -234,4 +237,4 @@ def test_use_stacked_blend_false_matches_current_behavior():
     ).fit(X, y)
     n_eml = _count_eml_leaves(m._root)
     n_total = _count_leaves(m._root)
-    assert n_eml < 0.4 * n_total
+    assert n_eml < 0.4 * n_total, f"{n_eml}/{n_total} EML leaves on pure noise"
