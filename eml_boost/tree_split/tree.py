@@ -77,7 +77,7 @@ class EmlSplitTreeRegressor:
         k_leaf_eml: int = 1,
         min_samples_leaf_eml: int = 50,
         leaf_eml_gain_threshold: float = 0.05,
-        use_stacked_blend: bool = False,
+        use_stacked_blend: bool = True,
         random_state: int | None = None,
     ):
         if eml_depth != 2:

@@ -193,7 +193,7 @@ def test_eml_leaf_gate_rejects_weak_fits():
     m = EmlSplitTreeRegressor(
         max_depth=3, min_samples_leaf=50, n_eml_candidates=0,
         k_leaf_eml=1, min_samples_leaf_eml=50,
-        leaf_eml_gain_threshold=0.05, random_state=0,
+        leaf_eml_gain_threshold=0.05, use_stacked_blend=False, random_state=0,
     ).fit(X, y)
     # No EML leaf should have passed the gate on pure noise.
     # (Some overfitting to training noise is possible, but with the 5% gate
