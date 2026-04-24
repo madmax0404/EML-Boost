@@ -318,3 +318,28 @@ def test_stacked_blend_no_numerical_blowup_on_heavy_tails():
     assert np.all(np.isfinite(pred)), (
         "prediction contains NaN or inf — numerical stability failure"
     )
+
+
+def test_leaf_stats_populated_when_blend_enabled():
+    """With `use_stacked_blend=True`, each leaf that reaches the EML
+    decision point should append a record to `_leaf_stats` with the
+    chosen α and the emitted leaf type."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
+    m = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_stacked_blend=True, random_state=0,
+    ).fit(X, y)
+    stats = m._leaf_stats
+    assert len(stats) >= 1
+    for s in stats:
+        assert s["n_leaf"] >= 30
+        assert 0.0 <= s["alpha"] <= 1.0
+        assert s["leaf_type"] in ("LeafNode", "EmlLeafNode")
+    # On a clean exp(x_0) signal we expect at least one non-collapsed EML leaf.
+    assert any(s["leaf_type"] == "EmlLeafNode" for s in stats)

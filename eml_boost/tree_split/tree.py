@@ -107,6 +107,7 @@ class EmlSplitTreeRegressor:
         rng = np.random.default_rng(self.random_state)
 
         self._X_cpu = X
+        self._leaf_stats: list[dict] = []
         # Global mean/std across the full training set, used to standardize
         # features inside EML leaves. Local (per-leaf) stats produce narrow
         # ranges that blow up at predict time when same-leaf test samples
@@ -534,6 +535,11 @@ class EmlSplitTreeRegressor:
 
         best_idx = int(blend_sse.argmin().item())
         if not bool(valid_blend[best_idx].item()):
+            self._leaf_stats.append({
+                "n_leaf": int(y_full.shape[0]),
+                "alpha": 1.0,
+                "leaf_type": "LeafNode",
+            })
             return LeafNode(value=constant_value)
 
         alpha_star = float(alpha[best_idx].item())
@@ -551,10 +557,20 @@ class EmlSplitTreeRegressor:
         # one ULP below 1.0 in float32 (~0.99999988), eta_folded lands at
         # ~1.2e-7 * eta_raw — we want to catch that as "collapsed."
         if abs(eta_folded) < 1e-6:
+            self._leaf_stats.append({
+                "n_leaf": int(y_full.shape[0]),
+                "alpha": alpha_star,
+                "leaf_type": "LeafNode",
+            })
             return LeafNode(value=bias_folded)
 
         desc_np = get_descriptor_np(2, k)
         desc_row = desc_np[best_idx]
+        self._leaf_stats.append({
+            "n_leaf": int(y_full.shape[0]),
+            "alpha": alpha_star,
+            "leaf_type": "EmlLeafNode",
+        })
         return EmlLeafNode(
             snapped=SnappedTree(
                 depth=2, k=k,
