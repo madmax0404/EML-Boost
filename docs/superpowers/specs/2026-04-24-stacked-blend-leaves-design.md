@@ -34,7 +34,7 @@ Replace the binary leaf gate with a val-fit convex blend between constant and EM
    - `η' = (1 − α*) · η`
    - `β' = α* · ȳ + (1 − α*) · β`
 6. **Emit leaf:**
-   - If `|η'| < 1e-10`, emit `LeafNode(value=β')` (blend collapsed to constant — keeps leaf-type count interpretable).
+   - If `|η'| < 1e-6`, emit `LeafNode(value=β')` (blend collapsed to constant — keeps leaf-type count interpretable). Threshold is calibrated to float32 one-ULP precision: when α is one ULP below 1.0 in float32, the folded η lands at ~1.2e-7, which a stricter threshold would miss.
    - Else emit `EmlLeafNode(snapped=best, feature_subset=top_features, feature_mean, feature_std, eta=η', bias=β')`.
 
 ### Why no new node type

@@ -494,6 +494,10 @@ class EmlSplitTreeRegressor:
         α ∈ [0, 1] on the val portion in closed form; picks the tree with
         smallest α-optimized val-SSE; folds α into (η, β) for storage. No
         gate — α=1 collapse to LeafNode replaces the accept/reject decision.
+
+        Fold:  η' = (1−α)·η,  β' = α·ȳ + (1−α)·β.
+        Collapse: emit LeafNode(β') when |η'| < 1e-6 (float32-calibrated).
+        Degenerate guard: α forced to 1 when ‖ȳ − val_pred‖² < 1e-12.
         """
         ybar = y_full.mean()
         # Pure-EML val predictions per candidate.
@@ -543,7 +547,10 @@ class EmlSplitTreeRegressor:
 
         # If the blend collapsed the EML contribution, emit a LeafNode so
         # leaf-type counts remain interpretable.
-        if abs(eta_folded) < 1e-10:
+        # Threshold calibrated to float32 one-ULP precision: when alpha is
+        # one ULP below 1.0 in float32 (~0.99999988), eta_folded lands at
+        # ~1.2e-7 * eta_raw — we want to catch that as "collapsed."
+        if abs(eta_folded) < 1e-6:
             return LeafNode(value=bias_folded)
 
         desc_np = get_descriptor_np(2, k)
