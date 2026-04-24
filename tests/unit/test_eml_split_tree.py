@@ -343,3 +343,26 @@ def test_leaf_stats_populated_when_blend_enabled():
         assert s["leaf_type"] in ("LeafNode", "EmlLeafNode")
     # On a clean exp(x_0) signal we expect at least one non-collapsed EML leaf.
     assert any(s["leaf_type"] == "EmlLeafNode" for s in stats)
+
+
+def test_leaf_eml_ridge_parameter_accepted():
+    """Constructor must accept the new leaf_eml_ridge parameter. At 0.0
+    (default) the predictions must be identical to a regressor built
+    without the parameter — this pins the backward-compat story."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
+
+    m_default = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30, random_state=0,
+    ).fit(X, y)
+    m_ridge_zero = EmlSplitTreeRegressor(
+        max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        leaf_eml_ridge=0.0, random_state=0,
+    ).fit(X, y)
+    assert np.allclose(m_default.predict(X), m_ridge_zero.predict(X))

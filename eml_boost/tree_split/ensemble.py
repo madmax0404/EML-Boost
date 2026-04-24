@@ -74,6 +74,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         k_leaf_eml: int = 1,
         min_samples_leaf_eml: int = 50,
         leaf_eml_gain_threshold: float = 0.05,
+        leaf_eml_ridge: float = 0.0,
         use_stacked_blend: bool = False,
         patience: int | None = 15,
         val_fraction: float = 0.15,
@@ -92,6 +93,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         self.k_leaf_eml = k_leaf_eml
         self.min_samples_leaf_eml = min_samples_leaf_eml
         self.leaf_eml_gain_threshold = leaf_eml_gain_threshold
+        self.leaf_eml_ridge = leaf_eml_ridge
         self.use_stacked_blend = use_stacked_blend
         self.patience = patience
         self.val_fraction = val_fraction
@@ -147,6 +149,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
                 k_leaf_eml=self.k_leaf_eml,
                 min_samples_leaf_eml=self.min_samples_leaf_eml,
                 leaf_eml_gain_threshold=self.leaf_eml_gain_threshold,
+                leaf_eml_ridge=self.leaf_eml_ridge,
                 use_stacked_blend=self.use_stacked_blend,
                 random_state=tree_seeds[m],
             ).fit(X_tr, r)
