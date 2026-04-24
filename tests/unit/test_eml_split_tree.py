@@ -406,6 +406,12 @@ def test_ridge_shrinks_max_abs_eta_monotonically():
         assert max_etas[i] >= max_etas[i + 1], (
             f"non-monotonic: ridge grid gives max|eta| = {max_etas}"
         )
+    # End-to-end strictness: ridge=10 must shrink max|η| meaningfully
+    # vs ridge=0. Without this, a broken ridge producing identical η
+    # across all ridge values would pass the non-strict monotonicity.
+    assert max_etas[0] > 2.0 * max_etas[-1], (
+        f"ridge failed to shrink meaningfully: max|eta| = {max_etas}"
+    )
 
 
 def test_ridge_prevents_blowup_on_heavy_tails():

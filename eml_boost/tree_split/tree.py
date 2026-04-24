@@ -413,9 +413,10 @@ class EmlSplitTreeRegressor:
         # self.leaf_eml_ridge > 0 we regularize the slope (η) with a ridge
         # penalty λ·η². The centered-ridge closed form adds n_fit·λ to the
         # normal-equation diagonal; on the original sufficient statistics
-        # that means replacing det with det + n_fit·λ. The bias term is
-        # then the conditional-OLS intercept given the shrunk slope:
-        # β = (Σy − η·Σp) / n_fit.
+        # that means replacing det with det + n_fit·λ. For λ > 0 the bias
+        # is the conditional-OLS intercept β = (Σy − η·Σp)/n_fit given the
+        # shrunk slope. At λ = 0 we use the old 2×2 normal-equation form
+        # for exact bit-compat with Experiment 9.
         n_fit = float(X_fit.shape[0])
         sum_p = preds_fit.sum(dim=1)
         sum_p2 = (preds_fit * preds_fit).sum(dim=1)
