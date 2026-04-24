@@ -75,7 +75,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         min_samples_leaf_eml: int = 50,
         leaf_eml_gain_threshold: float = 0.05,
         leaf_eml_ridge: float = 0.0,
-        leaf_eml_cap_k: float = 0.0,
+        leaf_eml_cap_k: float = 2.0,
         use_stacked_blend: bool = False,
         patience: int | None = 15,
         val_fraction: float = 0.15,

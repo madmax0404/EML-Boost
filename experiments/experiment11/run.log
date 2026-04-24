@@ -1,0 +1,197 @@
+
+=== dataset: 192_vineyard ===
+  [seed=0] n=    52  k=  2  train=41  test=11
+            C0 (   0.3s,  16 rounds) RMSE=2.3941
+       C_tight (   0.0s,  16 rounds) RMSE=2.3941
+       C_loose (   0.0s,  16 rounds) RMSE=2.3941
+         C_med (   0.0s,  16 rounds) RMSE=2.3941
+        C_wide (   0.0s,  16 rounds) RMSE=2.3941
+      lightgbm (   0.2s) RMSE=2.3949
+       xgboost (   0.2s) RMSE=3.0312
+  [seed=1] n=    52  k=  2  train=41  test=11
+            C0 (   0.0s,  16 rounds) RMSE=2.6208
+       C_tight (   0.0s,  16 rounds) RMSE=2.6208
+       C_loose (   0.0s,  16 rounds) RMSE=2.6208
+         C_med (   0.0s,  16 rounds) RMSE=2.6208
+        C_wide (   0.0s,  16 rounds) RMSE=2.6208
+      lightgbm (   0.2s) RMSE=2.4165
+       xgboost (   0.2s) RMSE=3.4206
+  [seed=2] n=    52  k=  2  train=41  test=11
+            C0 (   0.0s,  16 rounds) RMSE=4.5337
+       C_tight (   0.0s,  16 rounds) RMSE=4.5337
+       C_loose (   0.0s,  16 rounds) RMSE=4.5337
+         C_med (   0.0s,  16 rounds) RMSE=4.5337
+        C_wide (   0.0s,  16 rounds) RMSE=4.5337
+      lightgbm (   0.2s) RMSE=4.5223
+       xgboost (   0.1s) RMSE=3.4648
+
+=== dataset: 210_cloud ===
+  [seed=0] n=   108  k=  5  train=86  test=22
+            C0 (   0.7s,  36 rounds) RMSE=0.7461
+       C_tight (   0.3s,  36 rounds) RMSE=0.7461
+       C_loose (   0.3s,  36 rounds) RMSE=0.7461
+         C_med (   0.3s,  36 rounds) RMSE=0.7461
+        C_wide (   0.3s,  36 rounds) RMSE=0.7461
+      lightgbm (   0.2s) RMSE=0.7734
+       xgboost (   0.2s) RMSE=0.6548
+  [seed=1] n=   108  k=  5  train=86  test=22
+            C0 (   0.3s,  45 rounds) RMSE=0.4471
+       C_tight (   0.3s,  45 rounds) RMSE=0.4471
+       C_loose (   0.3s,  45 rounds) RMSE=0.4471
+         C_med (   0.3s,  45 rounds) RMSE=0.4471
+        C_wide (   0.3s,  45 rounds) RMSE=0.4471
+      lightgbm (   0.2s) RMSE=0.5469
+       xgboost (   0.2s) RMSE=0.2667
+  [seed=2] n=   108  k=  5  train=86  test=22
+            C0 (   0.2s,  28 rounds) RMSE=0.4732
+       C_tight (   0.2s,  28 rounds) RMSE=0.4732
+       C_loose (   0.3s,  28 rounds) RMSE=0.4732
+         C_med (   0.2s,  28 rounds) RMSE=0.4732
+        C_wide (   0.2s,  28 rounds) RMSE=0.4732
+      lightgbm (   0.2s) RMSE=0.4989
+       xgboost (   0.2s) RMSE=0.4816
+
+=== dataset: 523_analcatdata_neavote ===
+  [seed=0] n=   100  k=  2  train=80  test=20
+            C0 (   0.1s,  44 rounds) RMSE=0.7086
+       C_tight (   0.1s,  44 rounds) RMSE=0.7086
+       C_loose (   0.1s,  44 rounds) RMSE=0.7086
+         C_med (   0.1s,  44 rounds) RMSE=0.7086
+        C_wide (   0.1s,  44 rounds) RMSE=0.7082
+      lightgbm (   0.2s) RMSE=0.7221
+       xgboost (   0.1s) RMSE=0.7685
+  [seed=1] n=   100  k=  2  train=80  test=20
+            C0 (   0.3s, 115 rounds) RMSE=1.0683
+       C_tight (   0.3s, 115 rounds) RMSE=1.0759
+       C_loose (   0.3s, 115 rounds) RMSE=1.0759
+         C_med (   0.2s, 115 rounds) RMSE=1.0759
+        C_wide (   0.2s, 115 rounds) RMSE=1.0788
+      lightgbm (   0.2s) RMSE=1.0407
+       xgboost (   0.1s) RMSE=2.2208
+  [seed=2] n=   100  k=  2  train=80  test=20
+            C0 (   0.1s,  51 rounds) RMSE=0.8337
+       C_tight (   0.1s,  51 rounds) RMSE=0.8337
+       C_loose (   0.1s,  51 rounds) RMSE=0.8337
+         C_med (   0.1s,  51 rounds) RMSE=0.8337
+        C_wide (   0.1s,  51 rounds) RMSE=0.8337
+      lightgbm (   0.2s) RMSE=0.8304
+       xgboost (   0.1s) RMSE=2.1315
+
+=== dataset: 557_analcatdata_apnea1 ===
+  [seed=0] n=   475  k=  3  train=380  test=95
+            C0 (   5.6s, 139 rounds) RMSE=1303.8016
+       C_tight (   6.0s, 142 rounds) RMSE=1325.4679
+       C_loose (   7.0s, 171 rounds) RMSE=1326.3523
+         C_med (   6.5s, 159 rounds) RMSE=1325.4805
+        C_wide (   8.0s, 198 rounds) RMSE=1322.5046
+      lightgbm (   0.2s) RMSE=1375.5553
+       xgboost (   0.2s) RMSE=1137.8164
+  [seed=1] n=   475  k=  3  train=380  test=95
+            C0 (   2.9s,  72 rounds) RMSE=902.8389
+       C_tight (   3.2s,  79 rounds) RMSE=905.3017
+       C_loose (   3.2s,  79 rounds) RMSE=905.3017
+         C_med (   3.2s,  79 rounds) RMSE=905.3017
+        C_wide (   3.7s,  92 rounds) RMSE=911.0382
+      lightgbm (   0.2s) RMSE=1028.0661
+       xgboost (   0.2s) RMSE=874.7259
+  [seed=2] n=   475  k=  3  train=380  test=95
+            C0 (   3.4s,  81 rounds) RMSE=1671.0014
+       C_tight (   3.4s,  81 rounds) RMSE=1671.0014
+       C_loose (   3.8s,  94 rounds) RMSE=1645.2273
+         C_med (   3.8s,  94 rounds) RMSE=1645.2273
+        C_wide (   4.8s, 119 rounds) RMSE=1589.1183
+      lightgbm (   0.2s) RMSE=1728.9516
+       xgboost (   0.2s) RMSE=1358.6742
+
+=== dataset: 529_pollen ===
+  [seed=0] n=  3848  k=  4  train=3078  test=770
+            C0 (   8.2s,  86 rounds) RMSE=1.5711
+       C_tight (   7.4s,  73 rounds) RMSE=1.5734
+       C_loose (   7.3s,  66 rounds) RMSE=1.5681
+         C_med (   7.7s,  74 rounds) RMSE=1.5638
+        C_wide (   7.2s,  66 rounds) RMSE=1.5690
+      lightgbm (   0.3s) RMSE=1.6000
+       xgboost (   0.3s) RMSE=1.6113
+  [seed=1] n=  3848  k=  4  train=3078  test=770
+            C0 (   7.0s,  65 rounds) RMSE=1.5227
+       C_tight (   9.3s, 106 rounds) RMSE=1.5146
+       C_loose (   7.0s,  65 rounds) RMSE=1.5227
+         C_med (   7.1s,  65 rounds) RMSE=1.5227
+        C_wide (   7.1s,  65 rounds) RMSE=1.5227
+      lightgbm (   0.3s) RMSE=1.5491
+       xgboost (   0.2s) RMSE=1.5621
+  [seed=2] n=  3848  k=  4  train=3078  test=770
+            C0 (   9.5s, 104 rounds) RMSE=1.5342
+       C_tight (   8.9s,  93 rounds) RMSE=1.5314
+       C_loose (   7.4s,  68 rounds) RMSE=1.5314
+         C_med (   7.5s,  72 rounds) RMSE=1.5268
+        C_wide (   9.5s, 104 rounds) RMSE=1.5340
+      lightgbm (   0.3s) RMSE=1.5516
+       xgboost (   0.2s) RMSE=1.5626
+
+=== dataset: 562_cpu_small ===
+  [seed=0] n=  8192  k= 12  train=6553  test=1639
+            C0 (  20.3s, 200 rounds) RMSE=3.2698
+       C_tight (  21.3s, 200 rounds) RMSE=2.4756
+       C_loose (  21.4s, 200 rounds) RMSE=2.4922
+         C_med (  19.0s, 185 rounds) RMSE=2.4940
+        C_wide (  21.1s, 200 rounds) RMSE=2.5007
+      lightgbm (   0.4s) RMSE=3.0736
+       xgboost (   0.3s) RMSE=3.0879
+  [seed=1] n=  8192  k= 12  train=6553  test=1639
+            C0 (  18.1s, 161 rounds) RMSE=2.5944
+       C_tight (  14.2s, 128 rounds) RMSE=2.5881
+       C_loose (  20.5s, 200 rounds) RMSE=2.5453
+         C_med (  16.1s, 143 rounds) RMSE=2.5865
+        C_wide (  20.3s, 195 rounds) RMSE=2.5986
+      lightgbm (   0.3s) RMSE=3.1184
+       xgboost (   0.2s) RMSE=3.1229
+  [seed=2] n=  8192  k= 12  train=6553  test=1639
+            C0 (   3.8s,  25 rounds) RMSE=3.2360
+       C_tight (  18.2s, 165 rounds) RMSE=2.5436
+       C_loose (  21.2s, 200 rounds) RMSE=2.5570
+         C_med (  21.0s, 197 rounds) RMSE=2.5368
+        C_wide (  18.7s, 169 rounds) RMSE=2.5514
+      lightgbm (   0.4s) RMSE=2.6840
+       xgboost (   0.3s) RMSE=2.5557
+
+=== dataset: 564_fried ===
+  [seed=0] n= 40768  k= 10  train=32614  test=8154
+            C0 (  32.0s, 137 rounds) RMSE=1.0730
+       C_tight (  33.4s, 141 rounds) RMSE=1.0707
+       C_loose (  30.7s, 125 rounds) RMSE=1.0737
+         C_med (  42.8s, 200 rounds) RMSE=1.0771
+        C_wide (  32.7s, 138 rounds) RMSE=1.0716
+      lightgbm (   0.5s) RMSE=1.0717
+       xgboost (   0.3s) RMSE=1.0767
+  [seed=1] n= 40768  k= 10  train=32614  test=8154
+            C0 (  29.7s, 128 rounds) RMSE=1.0671
+       C_tight (  38.5s, 148 rounds) RMSE=1.0654
+       C_loose (  29.5s, 128 rounds) RMSE=1.0656
+         C_med (  34.5s, 158 rounds) RMSE=1.0630
+        C_wide (  38.4s, 185 rounds) RMSE=1.0635
+      lightgbm (   0.5s) RMSE=1.0694
+       xgboost (   0.3s) RMSE=1.0704
+  [seed=2] n= 40768  k= 10  train=32614  test=8154
+            C0 (  39.0s, 188 rounds) RMSE=1.0651
+       C_tight (  36.2s, 170 rounds) RMSE=1.0716
+       C_loose (  34.2s, 158 rounds) RMSE=1.0691
+         C_med (  30.5s, 133 rounds) RMSE=1.0703
+        C_wide (  29.4s, 129 rounds) RMSE=1.0690
+      lightgbm (   0.5s) RMSE=1.0635
+       xgboost (   0.3s) RMSE=1.0655
+
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment11/summary.csv
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment11/summary.json
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment11/cap_stats.json
+wrote /home/max1024/Workspaces/company/new-gbdt-angle/experiments/experiment11/pmlb_rmse.png
+
+=== Aggregate summary (mean over 3 seeds, ratio vs XGBoost) ===
+                     dataset           C0      C_tight      C_loose        C_med       C_wide
+                   210_cloud        1.188        1.188        1.188        1.188        1.188
+                   564_fried        0.998        0.998        0.999        0.999        0.997
+                  529_pollen        0.977        0.975        0.976        0.974        0.977
+     523_analcatdata_neavote        0.510        0.511        0.511        0.511        0.512
+               562_cpu_small        1.038        0.868        0.866        0.869        0.873
+                192_vineyard        0.963        0.963        0.963        0.963        0.963
+      557_analcatdata_apnea1        1.150        1.157        1.150        1.150        1.134
