@@ -537,7 +537,7 @@ class EmlSplitTreeRegressor:
         if not bool(valid_blend[best_idx].item()):
             self._leaf_stats.append({
                 "n_leaf": int(y_full.shape[0]),
-                "alpha": 1.0,
+                "alpha": 1.0,  # no valid tree — treat as full collapse to constant
                 "leaf_type": "LeafNode",
             })
             return LeafNode(value=constant_value)
