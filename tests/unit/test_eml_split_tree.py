@@ -493,3 +493,81 @@ def test_eml_leaf_node_default_cap_is_inf():
     )
     assert math.isinf(node.cap)
     assert node.cap > 0.0
+
+
+def test_cap_bounds_predictions_on_heavy_tails():
+    """With leaf_eml_cap_k=5.0, predictions on heavy-tailed features must
+    stay within 5·max|y_train| — directly targeting the Exp 9/10 failure
+    mode on 562_cpu_small. The ensemble is 10 rounds (quick), learning
+    rate 1.0 so we can sum tree contributions without too much decay."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+    rng = np.random.default_rng(0)
+    # Feature magnitudes ~ 1e6, mimicking the cpu_small failure regime.
+    X = rng.normal(size=(800, 2)) * 1e6
+    y = rng.uniform(0.0, 99.0, size=800)  # target range like cpu_small
+    X_te = rng.normal(size=(200, 2)) * 1e6
+
+    from eml_boost.tree_split import EmlSplitBoostRegressor
+    m = EmlSplitBoostRegressor(
+        max_rounds=10, max_depth=3,
+        learning_rate=1.0, min_samples_leaf=50,
+        n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=50,
+        leaf_eml_cap_k=5.0,
+        patience=0, val_fraction=0.0,
+        random_state=0,
+    ).fit(X, y)
+    pred = m.predict(X_te)
+    # The global F_0 = y.mean() ≈ 50; plus 10 trees each capped at
+    # 5·max|residual| ≤ 5·99 = 495. Realistic upper bound on prediction
+    # magnitude ≈ F_0 + 10·495 = 5000. The test uses a very loose 1e4.
+    assert np.all(np.isfinite(pred))
+    assert np.max(np.abs(pred)) < 1e4, f"max|pred| = {np.max(np.abs(pred)):.3g}"
+
+
+def test_cap_adapts_across_boosting_rounds():
+    """On a smooth signal where residuals shrink across boosting rounds,
+    the stored cap on EML leaves should also shrink. Walks the ensemble
+    and verifies that the MAX cap in the first boosting round's trees
+    exceeds the MAX cap in the last boosting round's trees."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("EML leaf fit requires CUDA")
+
+    def _collect_caps(node):
+        caps: list[float] = []
+        def walk(n):
+            if isinstance(n, EmlLeafNode):
+                caps.append(float(n.cap))
+            elif isinstance(n, InternalNode):
+                walk(n.left); walk(n.right)
+        walk(node)
+        return caps
+
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 2))
+    y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
+
+    from eml_boost.tree_split import EmlSplitBoostRegressor
+    m = EmlSplitBoostRegressor(
+        max_rounds=30, max_depth=3, learning_rate=0.1,
+        min_samples_leaf=20, n_eml_candidates=0,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        leaf_eml_cap_k=5.0,
+        patience=0, val_fraction=0.0,
+        random_state=0,
+    ).fit(X, y)
+
+    first_caps = _collect_caps(m._trees[0]._root)
+    last_caps = _collect_caps(m._trees[-1]._root)
+    # Need EML leaves in both for the comparison to be meaningful.
+    assert first_caps and last_caps, (
+        f"expected EML leaves in first and last trees, got "
+        f"{len(first_caps)} first, {len(last_caps)} last"
+    )
+    assert max(first_caps) > max(last_caps), (
+        f"cap did not shrink: first-round max {max(first_caps):.3g}, "
+        f"last-round max {max(last_caps):.3g}"
+    )

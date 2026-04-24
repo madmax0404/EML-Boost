@@ -446,10 +446,19 @@ class EmlSplitTreeRegressor:
         finite_coefs = torch.isfinite(eta) & torch.isfinite(bias)
         valid = feature_mask & finite_preds & finite_coefs & (det.abs() > 1e-6)
 
+        # Per-leaf magnitude cap (Experiment 11). With leaf_eml_cap_k = 0
+        # the cap is inf, making the downstream clip a no-op.
+        cap_k = float(self.leaf_eml_cap_k)
+        if cap_k > 0.0:
+            cap_leaf = cap_k * float(y_full.abs().max().item())
+        else:
+            cap_leaf = float("inf")
+
         ctx = dict(
             y_full=y_full, y_val=y_val, eta=eta, bias=bias,
             preds_val=preds_val, valid=valid, k=k, top_features=top_features,
             mean_x=mean_x, std_x=std_x, constant_value=constant_value,
+            cap_leaf=cap_leaf,
         )
         if self.use_stacked_blend:
             return self._select_leaf_blended(**ctx)
@@ -469,11 +478,14 @@ class EmlSplitTreeRegressor:
         mean_x: "torch.Tensor",
         std_x: "torch.Tensor",
         constant_value: float,
+        cap_leaf: float,
     ) -> Node:
         """Legacy binary-gate tree selection. Picks the tree with smallest
         val-SSE on the pure-EML prediction; accepts it only if val-SSE beats
         the constant-leaf val-SSE by ``leaf_eml_gain_threshold``."""
         val_pred = eta.unsqueeze(1) * preds_val + bias.unsqueeze(1)
+        if cap_leaf < float("inf"):
+            val_pred = torch.clamp(val_pred, -cap_leaf, cap_leaf)
         val_res = y_val.unsqueeze(0) - val_pred
         val_sse = (val_res * val_res).sum(dim=1)
         val_sse = torch.where(valid, val_sse, torch.full_like(val_sse, float("inf")))
@@ -500,6 +512,7 @@ class EmlSplitTreeRegressor:
             feature_std=tuple(float(v) for v in std_x.cpu().numpy()),
             eta=float(eta[best_idx].item()),
             bias=float(bias[best_idx].item()),
+            cap=cap_leaf,
         )
 
     def _select_leaf_blended(
@@ -516,6 +529,7 @@ class EmlSplitTreeRegressor:
         mean_x: "torch.Tensor",
         std_x: "torch.Tensor",
         constant_value: float,
+        cap_leaf: float,
     ) -> Node:
         """Stacked-blend tree selection. Per candidate tree, fits the optimal
         α ∈ [0, 1] on the val portion in closed form; picks the tree with
@@ -529,6 +543,8 @@ class EmlSplitTreeRegressor:
         ybar = y_full.mean()
         # Pure-EML val predictions per candidate.
         val_pred = eta.unsqueeze(1) * preds_val + bias.unsqueeze(1)  # (n_trees, n_val)
+        if cap_leaf < float("inf"):
+            val_pred = torch.clamp(val_pred, -cap_leaf, cap_leaf)
 
         # Prediction under the blend: blend = α·ȳ + (1−α)·val_pred.
         # Loss = ||y_val − blend||² = ||(y_val − val_pred) − α·(ȳ − val_pred)||².
@@ -608,6 +624,7 @@ class EmlSplitTreeRegressor:
             feature_std=tuple(float(v) for v in std_x.cpu().numpy()),
             eta=eta_folded,
             bias=bias_folded,
+            cap=cap_leaf,
         )
 
     def _best_threshold_histogram(
@@ -767,7 +784,10 @@ class EmlSplitTreeRegressor:
             )
             preds = evaluate_trees_torch(desc_t, X_t, node.snapped.k)  # (1, n)
             vals = preds.squeeze(0).cpu().numpy().astype(np.float64)
-            out[idx] = node.eta * vals + node.bias
+            pred = node.eta * vals + node.bias
+            if node.cap < float("inf"):
+                pred = np.clip(pred, -node.cap, node.cap)
+            out[idx] = pred
             return
         if len(idx) == 0:
             return
