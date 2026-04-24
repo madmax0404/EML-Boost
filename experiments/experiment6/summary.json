@@ -1,0 +1,82 @@
+{
+  "config": {
+    "n_train": 500,
+    "n_test": 200,
+    "noise_std": 0.02,
+    "max_rounds": 100,
+    "depth_dt": 6,
+    "depth_eml": 2,
+    "k": 2,
+    "train_range": [
+      -1.0,
+      1.0
+    ],
+    "extrap_range": [
+      1.0,
+      2.0
+    ],
+    "seed": 0
+  },
+  "results": {
+    "exp(x_0) - log(x_1 + 2)": {
+      "Hybrid": {
+        "train_mse": 0.1479945515376504,
+        "in_range_mse": 0.15278438189119464,
+        "extrap_mse": 0.13481825333391553,
+        "elapsed_seconds": 486.1266222000122
+      },
+      "LightGBM": {
+        "train_mse": 0.0008673053606314536,
+        "in_range_mse": 0.0022048549381988337,
+        "extrap_mse": 4.950560250573044,
+        "elapsed_seconds": 0.38986706733703613
+      },
+      "XGBoost": {
+        "train_mse": 0.0001238458045703833,
+        "in_range_mse": 0.00243310670606884,
+        "extrap_mse": 4.899882390230986,
+        "elapsed_seconds": 0.2897980213165283
+      }
+    },
+    "x_0 + x_1": {
+      "Hybrid": {
+        "train_mse": 0.13859913557511866,
+        "in_range_mse": 0.18294950536414958,
+        "extrap_mse": 4.586887995692173,
+        "elapsed_seconds": 486.28192496299744
+      },
+      "LightGBM": {
+        "train_mse": 0.0009506909205752637,
+        "in_range_mse": 0.0035919985603644904,
+        "extrap_mse": 1.5958601371515142,
+        "elapsed_seconds": 0.21654844284057617
+      },
+      "XGBoost": {
+        "train_mse": 0.0001458873207343655,
+        "in_range_mse": 0.0033599705456193595,
+        "extrap_mse": 1.27793103361384,
+        "elapsed_seconds": 0.10488057136535645
+      }
+    },
+    "x_0 * x_1": {
+      "Hybrid": {
+        "train_mse": 0.10994950644406379,
+        "in_range_mse": 0.12166309868187984,
+        "extrap_mse": 3.0614846239089375,
+        "elapsed_seconds": 487.38062739372253
+      },
+      "LightGBM": {
+        "train_mse": 0.0018664646727161443,
+        "in_range_mse": 0.003517217840063428,
+        "extrap_mse": 2.445227250641955,
+        "elapsed_seconds": 0.20412135124206543
+      },
+      "XGBoost": {
+        "train_mse": 0.00022111344087809442,
+        "in_range_mse": 0.003912179441433644,
+        "extrap_mse": 2.497094585358395,
+        "elapsed_seconds": 0.17228412628173828
+      }
+    }
+  }
+}
