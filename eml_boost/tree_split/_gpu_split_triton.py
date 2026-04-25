@@ -123,6 +123,7 @@ def _hist_scan_kernel(
     out_gain_ptr,   # (N_FEATURES,) float32 — best gain per feature
     out_bin_ptr,    # (N_FEATURES,) int32   — best bin boundary per feature
     n_features,
+    leaf_l2,                              # runtime float, not constexpr — avoids recompilation per λ value
     MIN_LEAF: tl.constexpr,
     N_BINS: tl.constexpr,
 ):
@@ -158,8 +159,8 @@ def _hist_scan_kernel(
     total_sum = tl.sum(s, axis=0)
     total_sq = tl.sum(sq, axis=0)
 
-    # Parent SSE = total_sq - total_sum² / max(total_cnt, 1).
-    total_cnt_safe = tl.maximum(total_cnt, 1.0)
+    # Parent SSE = total_sq - total_sum² / (max(total_cnt, 1) + leaf_l2).
+    total_cnt_safe = tl.maximum(total_cnt, 1.0) + leaf_l2
     total_sse = total_sq - total_sum * total_sum / total_cnt_safe
 
     # For boundary b ∈ [0, N_BINS-1], left side = bins 0..b inclusive.
@@ -174,8 +175,8 @@ def _hist_scan_kernel(
     right_sum = total_sum - left_sum
     right_sq = total_sq - left_sq
 
-    left_cnt_safe = tl.maximum(left_cnt, 1.0)
-    right_cnt_safe = tl.maximum(right_cnt, 1.0)
+    left_cnt_safe = tl.maximum(left_cnt, 1.0) + leaf_l2
+    right_cnt_safe = tl.maximum(right_cnt, 1.0) + leaf_l2
     left_sse = left_sq - left_sum * left_sum / left_cnt_safe
     right_sse = right_sq - right_sum * right_sum / right_cnt_safe
     gain = total_sse - left_sse - right_sse
@@ -204,6 +205,7 @@ def gpu_histogram_split_triton(
     y: torch.Tensor,
     n_bins: int,
     min_leaf_count: int = 1,
+    leaf_l2: float = 0.0,                       # NEW
 ) -> tuple[int, float, float]:
     """Triton-accelerated best-split-finding.
 
@@ -290,6 +292,7 @@ def gpu_histogram_split_triton(
         out_gain,
         out_bin,
         n_features=d,
+        leaf_l2=leaf_l2,                        # NEW
         MIN_LEAF=min_leaf_count,
         N_BINS=n_bins,
     )

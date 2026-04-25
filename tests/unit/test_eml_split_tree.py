@@ -870,3 +870,44 @@ def test_leaf_l2_zero_constant_leaves_bit_exact():
         f"snapshot shape mismatch: {pred.shape} vs {expected.shape}"
     )
     np.testing.assert_array_equal(pred, expected)
+
+
+def test_hist_split_triton_matches_torch_with_l2():
+    """The Triton _hist_scan_kernel must agree with the torch oracle
+    at multiple leaf_l2 values, including 0.0 (bit-exact-equivalent)
+    and 1.0 (the new default). Uses the same tolerance as
+    test_histogram_split_triton_matches_torch (rtol=5e-3 on gain,
+    one bin width on threshold)."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    from eml_boost.tree_split._gpu_split import gpu_histogram_split_torch
+    from eml_boost.tree_split._gpu_split_triton import (
+        gpu_histogram_split_triton,
+    )
+
+    rng = np.random.default_rng(0)
+    n, d = 1000, 5
+    X = torch.tensor(
+        rng.uniform(-1, 1, size=(n, d)), dtype=torch.float32, device="cuda"
+    )
+    y = torch.tensor(
+        X[:, 2].cpu().numpy() * 2 + 0.1 * rng.normal(size=n),
+        dtype=torch.float32, device="cuda",
+    )
+
+    for lam in (0.0, 0.5, 1.0, 2.0):
+        idx_t, thr_t, gain_t = gpu_histogram_split_torch(
+            X, y, n_bins=256, min_leaf_count=20, leaf_l2=lam,
+        )
+        idx_tri, thr_tri, gain_tri = gpu_histogram_split_triton(
+            X, y, n_bins=256, min_leaf_count=20, leaf_l2=lam,
+        )
+        assert int(idx_t) == int(idx_tri), f"feature mismatch at lam={lam}"
+        assert abs(float(thr_t) - float(thr_tri)) < 0.01, (
+            f"threshold mismatch at lam={lam}: torch={thr_t} triton={thr_tri}"
+        )
+        np.testing.assert_allclose(
+            float(gain_t), float(gain_tri), rtol=5e-3,
+            err_msg=f"gain mismatch at lam={lam}",
+        )
