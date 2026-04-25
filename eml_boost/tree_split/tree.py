@@ -552,6 +552,7 @@ class EmlSplitTreeRegressor:
         # shrunk slope. At λ = 0 we use the old 2×2 normal-equation form
         # for exact bit-compat with Experiment 9.
         n_fit = float(X_fit.shape[0])
+        n_fit_reg = n_fit + float(self.leaf_l2)        # NEW
         sum_p = preds_fit.sum(dim=1)
         sum_p2 = (preds_fit * preds_fit).sum(dim=1)
         sum_y_f = y_fit.sum()
@@ -567,8 +568,10 @@ class EmlSplitTreeRegressor:
         eta = (n_fit * sum_py_f - sum_p * sum_y_f) / det_safe
         if lam == 0.0:
             bias = (sum_p2 * sum_y_f - sum_p * sum_py_f) / det_safe
+            if self.leaf_l2 > 0.0:                     # NEW: post-shrink the closed-form bias
+                bias = bias * n_fit / n_fit_reg
         else:
-            bias = (sum_y_f - eta * sum_p) / n_fit
+            bias = (sum_y_f - eta * sum_p) / n_fit_reg # CHANGED denom from n_fit to n_fit_reg
 
         # Validity mask.
         finite_preds = (
