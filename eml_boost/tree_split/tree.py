@@ -417,7 +417,7 @@ class EmlSplitTreeRegressor:
         cumsum_sq = np.cumsum(yr ** 2)
         total_sum = cumsum[-1]
         total_sq = cumsum_sq[-1]
-        total_sse = total_sq - total_sum ** 2 / n
+        total_sse = total_sq - total_sum ** 2 / (np.maximum(n, 1.0) + leaf_l2)
 
         # For split after position i-1 (i ∈ {1..n-1}): left has i samples,
         # right has n-i samples. Vectorize and mask off zero-gain positions
@@ -430,9 +430,7 @@ class EmlSplitTreeRegressor:
         right_sq = total_sq - left_sq
         right_sse = right_sq - right_sum ** 2 / (np.maximum(n - i, 1.0) + leaf_l2)
 
-        # Recompute total_sse with the same regularizer for symmetric subtraction.
-        total_sse_reg = total_sq - total_sum ** 2 / (np.maximum(n, 1.0) + leaf_l2)
-        gain = total_sse_reg - left_sse - right_sse
+        gain = total_sse - left_sse - right_sse
         # Only legal splits are those where the two adjacent values differ.
         legal = v[1:] > v[:-1]
         gain = np.where(legal, gain, -np.inf)
