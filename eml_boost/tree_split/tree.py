@@ -1004,7 +1004,8 @@ class EmlSplitTreeRegressor:
 
     def _predict_x_gpu(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
         """GPU-input predict. Tries Triton kernel first; falls back
-        to torch loop if Triton compile or run fails."""
+        to torch loop if Triton fails. Warns once per instance on
+        first fallback so silent failures don't go unnoticed."""
         device = X_gpu.device
         if self._gpu_tree_device != device:
             self._gpu_tree = {
@@ -1015,7 +1016,17 @@ class EmlSplitTreeRegressor:
         try:
             from eml_boost.tree_split._predict_triton import predict_tree_triton
             return predict_tree_triton(X_gpu, self._gpu_tree, self.max_depth)
-        except (RuntimeError, ImportError, triton.compiler.CompilationError):
+        except Exception as exc:  # broad: a kernel bug would otherwise silently fall back
+            if not getattr(self, "_triton_fallback_warned", False):
+                import warnings
+                warnings.warn(
+                    f"Triton predict kernel failed; falling back to torch loop. "
+                    f"This warning fires once per tree instance. "
+                    f"{type(exc).__name__}: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self._triton_fallback_warned = True
             return self._predict_x_gpu_torch(X_gpu)
 
     def _predict_x_gpu_torch(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
