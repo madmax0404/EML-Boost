@@ -114,6 +114,9 @@ def _fit_lgb(X_tr, y_tr, seed):
     """LightGBM matched: min_data_in_leaf=1 (was 20), reg_lambda=1.0 (was 0),
     early_stopping_rounds=15 using the same-seed 15% inner val split."""
     start = time.time()
+    # NOTE: same seed as outer split AND as SB's internal val_fraction split,
+    # but SB uses its own RNG → inner-val rows are same-shape, not byte-identical.
+    # See spec § "Inner train/val split for early stopping".
     X_inner_tr, X_inner_val, y_inner_tr, y_inner_val = train_test_split(
         X_tr, y_tr, test_size=INNER_VAL_FRACTION, random_state=seed,
     )
@@ -147,6 +150,9 @@ def _fit_xgb(X_tr, y_tr, seed):
     reg_lambda=1.0 (existing default, made explicit), early_stopping_rounds=15
     using the same-seed 15% inner val split."""
     start = time.time()
+    # NOTE: same seed as outer split AND as SB's internal val_fraction split,
+    # but SB uses its own RNG → inner-val rows are same-shape, not byte-identical.
+    # See spec § "Inner train/val split for early stopping".
     X_inner_tr, X_inner_val, y_inner_tr, y_inner_val = train_test_split(
         X_tr, y_tr, test_size=INNER_VAL_FRACTION, random_state=seed,
     )
@@ -167,7 +173,8 @@ def _fit_xgb(X_tr, y_tr, seed):
         eval_set=[(X_inner_val, y_inner_val)],
         verbose=False,
     )
-    m.n_rounds = m.best_iteration + 1  # expose for logging (early-stopping aware)
+    # best_iteration may be None when early stopping doesn't fire on some XGB versions; guard.
+    m.n_rounds = (m.best_iteration or 0) + 1  # expose for logging (early-stopping aware)
     return m, time.time() - start
 
 
@@ -490,7 +497,9 @@ def main() -> int:
     # ---- comparison_to_exp15.md ----
     md_path = RESULTS_DIR / "comparison_to_exp15.md"
     exp15_summary_path = RESULTS_DIR.parent / "experiment15" / "summary.json"
-    if exp15_summary_path.exists():
+    if not exp15_summary_path.exists():
+        print(f"skipping comparison_to_exp15.md: {exp15_summary_path} not found", flush=True)
+    else:
         with exp15_summary_path.open() as fp:
             exp15 = json.load(fp)
         rows_for_md = []
@@ -502,12 +511,14 @@ def main() -> int:
             else:
                 rows_for_md.append((name, old_r, new_r, new_r - old_r))
         rows_for_md.sort(key=lambda r: r[3] if r[3] is not None else 0.0)
+        deltas = [r[3] for r in rows_for_md if r[3] is not None]
+        mean_delta_str = f"{mean(deltas):+.3f}" if deltas else "—"
 
         with md_path.open("w") as fp:
             fp.write("# Experiment 17 vs Experiment 15 — per-dataset ratio comparison\n\n")
             fp.write("Sorted by Δ (most-improved first; positive Δ = SB got worse vs matched-XGB).\n\n")
             fp.write(f"**Datasets in both runs:** {sum(1 for r in rows_for_md if r[1] is not None)}\n")
-            fp.write(f"**Mean Δ:** {mean(r[3] for r in rows_for_md if r[3] is not None):+.3f}\n")
+            fp.write(f"**Mean Δ:** {mean_delta_str}\n")
             n_improved = sum(1 for r in rows_for_md if r[3] is not None and r[3] < 0)
             n_regressed = sum(1 for r in rows_for_md if r[3] is not None and r[3] > 0)
             fp.write(f"**Improved (Δ < 0):** {n_improved}\n")
