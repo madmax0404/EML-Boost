@@ -14,6 +14,16 @@ The math mirrors the CPU histogram implementation in `tree.py`:
 Running this fused on CUDA turns ~20 numpy histogram calls per node into
 a single GPU kernel launch. At n=40k, d=20, the per-node cost drops from
 several milliseconds of Python dispatch to a few microseconds of GPU time.
+
+This module provides two implementations:
+
+* ``gpu_histogram_split_torch`` — the original pure-torch implementation
+  using ``scatter_add`` + ``cumsum``. Acts as the numerical oracle and
+  the fallback path.
+* ``gpu_histogram_split`` — top-level dispatcher that tries the Triton
+  kernel from ``_gpu_split_triton.py`` first and falls back to the
+  torch path on any error, warning once per process on the first
+  fallback.
 """
 
 from __future__ import annotations
@@ -21,7 +31,13 @@ from __future__ import annotations
 import torch
 
 
-def gpu_histogram_split(
+# Module-level state for the dispatcher's warn-once-on-fallback contract.
+# Set to True after the first time we fall back from the Triton path so
+# subsequent fallbacks don't spam the user's stderr.
+_TRITON_HIST_FALLBACK_WARNED = False
+
+
+def gpu_histogram_split_torch(
     values: torch.Tensor,
     y: torch.Tensor,
     n_bins: int,
@@ -126,3 +142,36 @@ def gpu_histogram_split(
         (vmin[best_feat] + bin_width[best_feat] * (best_bin + 1)).item()
     )
     return best_feat, threshold, best_gain
+
+
+def gpu_histogram_split(
+    feats: torch.Tensor,
+    y: torch.Tensor,
+    n_bins: int,
+    min_leaf_count: int = 1,
+) -> tuple[int, float, float]:
+    """Best-split-finding via histogram. Tries Triton kernel first;
+    falls back to the torch implementation on any error.
+
+    Warns once per process the first time the fallback fires so silent
+    Triton failures don't go unnoticed in production runs. Mirrors the
+    same dispatcher pattern used for the predict kernel (commit a4df96d).
+    """
+    try:
+        from eml_boost.tree_split._gpu_split_triton import (
+            gpu_histogram_split_triton,
+        )
+        return gpu_histogram_split_triton(feats, y, n_bins, min_leaf_count)
+    except Exception as exc:  # broad: a kernel bug would otherwise silently fall back
+        global _TRITON_HIST_FALLBACK_WARNED
+        if not _TRITON_HIST_FALLBACK_WARNED:
+            import warnings
+            warnings.warn(
+                f"Triton histogram-split kernel failed; falling back to torch. "
+                f"This warning fires once per process. "
+                f"{type(exc).__name__}: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _TRITON_HIST_FALLBACK_WARNED = True
+        return gpu_histogram_split_torch(feats, y, n_bins, min_leaf_count)

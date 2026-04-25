@@ -681,6 +681,32 @@ def test_predict_triton_matches_torch():
     np.testing.assert_allclose(pred_triton, pred_torch, rtol=1e-3, atol=1e-3)
 
 
+def test_histogram_split_triton_matches_torch():
+    """The Triton histogram-split kernel must return the same
+    (best_idx, threshold, gain) triple as the torch implementation."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    from eml_boost.tree_split._gpu_split import gpu_histogram_split_torch
+    from eml_boost.tree_split._gpu_split_triton import gpu_histogram_split_triton
+
+    rng = np.random.default_rng(0)
+    n, d = 1000, 5
+    X = torch.tensor(rng.uniform(-1, 1, size=(n, d)).astype(np.float32),
+                     device='cuda')
+    y_np = X[:, 2].cpu().numpy() * 2 + 0.1 * rng.normal(size=n)
+    y = torch.tensor(y_np.astype(np.float32), device='cuda')
+
+    idx_t, thr_t, gain_t = gpu_histogram_split_torch(X, y, n_bins=256, min_leaf_count=20)
+    idx_tri, thr_tri, gain_tri = gpu_histogram_split_triton(X, y, n_bins=256, min_leaf_count=20)
+
+    assert int(idx_t) == int(idx_tri), \
+        f"feature mismatch: torch={idx_t}, triton={idx_tri}"
+    assert abs(float(thr_t) - float(thr_tri)) < 0.05, \
+        f"threshold mismatch: torch={thr_t}, triton={thr_tri}"
+    np.testing.assert_allclose(float(gain_t), float(gain_tri), rtol=5e-3)
+
+
 def test_gpu_speedup_on_synthetic_large():
     """Sanity: a 100k-row synthetic at depth=8 must complete in
     under 60 seconds. The pre-port baseline (extrapolating from
