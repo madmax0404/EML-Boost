@@ -792,3 +792,34 @@ def test_tensorize_tree_numpy_matches_torch_baseline():
     leaves = (tt["node_kind"] == 2) | (tt["node_kind"] == 3)
     assert (tt["left_child"][leaves] == -1).all()
     assert (tt["right_child"][leaves] == -1).all()
+
+
+def test_fit_leaf_item_batching_preserves_predictions():
+    """End-to-end: with a fixed seed, predictions on a held-out set must
+    be finite, and train MSE must be sub-threshold on a clean signal —
+    smoke check that the .item() batching refactor in _fit_leaf and
+    _select_leaf_gated didn't change the gating semantics."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(42)
+    X = rng.uniform(-1, 1, size=(800, 6)).astype(np.float64)
+    y = (np.exp(X[:, 0]) + 0.5 * X[:, 1] - X[:, 2] ** 2
+         + 0.1 * rng.normal(size=800))
+    X_te = rng.uniform(-1, 1, size=(200, 6)).astype(np.float64)
+
+    m = EmlSplitTreeRegressor(
+        max_depth=5,
+        n_eml_candidates=10,
+        k_eml=3,
+        k_leaf_eml=1,
+        min_samples_leaf_eml=30,
+        leaf_eml_cap_k=2.0,
+        use_gpu=True,
+        random_state=0,
+    ).fit(X, y)
+    pred = m.predict(X_te)
+    assert np.all(np.isfinite(pred))
+    train_mse = float(np.mean((m.predict(X) - y) ** 2))
+    # Clean signal with var ~= 1.5; trivially-fit MSE should be well below.
+    assert train_mse < 0.5

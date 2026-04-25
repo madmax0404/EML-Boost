@@ -445,18 +445,51 @@ class EmlSplitTreeRegressor:
         if n == 0:
             return LeafNode(value=0.0)
         y_sub = self._y_gpu[indices]
-        constant_value = float(y_sub.mean().item())
 
-        # Early-out gates.
+        # Early-out gates. Only constant_value is needed in the constant
+        # fallback path; keep a single .item() here so we don't allocate
+        # the GPU stack tensor when we won't use it.
         eml_disabled = self.k_leaf_eml <= 0
         too_small = n < self.min_samples_leaf_eml
         no_gpu = self._X_gpu is None or self._device is None
         n_raw = self._X_cpu.shape[1] if self._X_cpu is not None else 0
         if eml_disabled or too_small or no_gpu or n_raw == 0:
-            return LeafNode(value=constant_value)
+            return LeafNode(value=float(y_sub.mean().item()))
 
         device = self._device
         assert device is not None and self._X_gpu is not None
+
+        # Batched D2H read for the three scalars we'll need below
+        # (constant_value, RNG seed, cap_leaf). Coalescing 3 .item()
+        # calls into one .cpu() saves 2 cuda-stream syncs per leaf.
+        # NOTE on the int->float32 cast for indices[0]: float32 mantissa
+        # is 24 bits, so row indices < 2**24 round-trip exactly. PMLB max
+        # is 1M (1191_BNG_pbc), so all current datasets are safe; assert
+        # to fail loudly on any future giant dataset.
+        assert n < (1 << 24), (
+            f"row index batched as float32 requires n < 2**24, got n={n}; "
+            "fall back to per-call .item() for indices[0] in this regime"
+        )
+        cap_k = float(self.leaf_eml_cap_k)
+        if cap_k > 0.0:
+            scalars_gpu = torch.stack([
+                y_sub.mean(),
+                indices[0].to(torch.float32),
+                y_sub.abs().max() * cap_k,
+            ])
+            scalars = scalars_gpu.cpu().numpy()
+            constant_value = float(scalars[0])
+            seed = int(scalars[1])
+            cap_leaf = float(scalars[2])
+        else:
+            scalars_gpu = torch.stack([
+                y_sub.mean(),
+                indices[0].to(torch.float32),
+            ])
+            scalars = scalars_gpu.cpu().numpy()
+            constant_value = float(scalars[0])
+            seed = int(scalars[1])
+            cap_leaf = float("inf")
 
         k = min(self.k_leaf_eml, n_raw)
         # X_sub_raw: gather X_gpu by leaf indices, then by top-k features.
@@ -484,7 +517,6 @@ class EmlSplitTreeRegressor:
         # out from the per-tree OLS fit so the tree-selection policy
         # (either the legacy gate or the Task 2 blend) can evaluate
         # generalization rather than training fit.
-        seed = int(indices[0].item()) if n > 0 else 0
         rng_leaf = np.random.default_rng(seed)
         perm = rng_leaf.permutation(n)
         val_sz = max(n // 4, 5)
@@ -540,13 +572,8 @@ class EmlSplitTreeRegressor:
         finite_coefs = torch.isfinite(eta) & torch.isfinite(bias)
         valid = feature_mask & finite_preds & finite_coefs & (det.abs() > 1e-6)
 
-        # Per-leaf magnitude cap (Experiment 11). With leaf_eml_cap_k = 0
-        # the cap is inf, making the downstream clip a no-op.
-        cap_k = float(self.leaf_eml_cap_k)
-        if cap_k > 0.0:
-            cap_leaf = cap_k * float(y_full.abs().max().item())
-        else:
-            cap_leaf = float("inf")
+        # cap_leaf was already computed in the batched scalar read above;
+        # nothing more to do here.
 
         ctx = dict(
             y_full=y_full, y_val=y_val, eta=eta, bias=bias,
@@ -584,12 +611,30 @@ class EmlSplitTreeRegressor:
         val_sse = (val_res * val_res).sum(dim=1)
         val_sse = torch.where(valid, val_sse, torch.full_like(val_sse, float("inf")))
 
-        best_idx = int(val_sse.argmin().item())
-        if not bool(valid[best_idx].item()):
+        # Compute every scalar we need on GPU first, then ONE .cpu() read
+        # for all four. Saves 3 cuda-stream syncs vs the prior 4 .item()s.
+        # bool->float32->bool round-trips exactly (1.0/0.0 are exact).
+        # best_idx is bounded by the number of candidate trees (max 144),
+        # so the int->float32 cast is also exact.
+        best_idx_gpu = val_sse.argmin()
+        valid_at_best_gpu = valid[best_idx_gpu]
+        best_val_sse_gpu = val_sse[best_idx_gpu]
+        constant_val_sse_gpu = ((y_val - y_full.mean()) ** 2).sum()
+
+        batch = torch.stack([
+            best_idx_gpu.to(torch.float32),
+            valid_at_best_gpu.to(torch.float32),
+            best_val_sse_gpu,
+            constant_val_sse_gpu,
+        ]).cpu().numpy()
+        best_idx = int(batch[0])
+        valid_at_best = bool(batch[1])
+        best_val_sse = float(batch[2])
+        constant_val_sse = float(batch[3])
+
+        if not valid_at_best:
             return LeafNode(value=constant_value)
 
-        best_val_sse = float(val_sse[best_idx].item())
-        constant_val_sse = float(((y_val - y_full.mean()) ** 2).sum().item())
         if best_val_sse >= constant_val_sse * (1.0 - self.leaf_eml_gain_threshold):
             return LeafNode(value=constant_value)
 
