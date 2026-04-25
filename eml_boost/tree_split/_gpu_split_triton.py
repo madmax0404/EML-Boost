@@ -229,6 +229,13 @@ def gpu_histogram_split_triton(
     if n < 2 * min_leaf_count:
         return 0, 0.0, 0.0
 
+    if n_bins <= 0 or (n_bins & (n_bins - 1)) != 0:
+        raise ValueError(
+            f"n_bins must be a positive power of 2 for the Triton kernel "
+            f"(got {n_bins}). Caller can use the torch fallback "
+            f"(gpu_histogram_split_torch) for arbitrary n_bins."
+        )
+
     device = feats.device
     dtype = torch.float32
 

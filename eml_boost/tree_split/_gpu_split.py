@@ -162,7 +162,7 @@ def gpu_histogram_split(
             gpu_histogram_split_triton,
         )
         return gpu_histogram_split_triton(feats, y, n_bins, min_leaf_count)
-    except Exception as exc:  # broad: a kernel bug would otherwise silently fall back
+    except Exception as exc:  # broad catch: any kernel-level failure (compile, OOM, illegal mem) falls back to torch; warn-once below surfaces the issue.
         global _TRITON_HIST_FALLBACK_WARNED
         if not _TRITON_HIST_FALLBACK_WARNED:
             import warnings
