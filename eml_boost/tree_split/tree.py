@@ -24,6 +24,7 @@ from eml_boost._triton_exhaustive import (
     descriptor_feature_mask_numpy,
     enumerate_depth2_descriptor,
     evaluate_trees_torch,
+    evaluate_trees_torch_per_sample,
     evaluate_trees_triton,
     get_descriptor_gpu,
     get_descriptor_np,
@@ -110,6 +111,8 @@ class EmlSplitTreeRegressor:
         self.leaf_eml_cap_k = leaf_eml_cap_k
         self.use_stacked_blend = use_stacked_blend
         self.random_state = random_state
+        self._gpu_tree = None
+        self._gpu_tree_device = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "EmlSplitTreeRegressor":
         X = np.asarray(X, dtype=np.float64)
@@ -146,9 +149,11 @@ class EmlSplitTreeRegressor:
                 len(X), dtype=torch.long, device=self._device,
             )
             self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+            self._gpu_tree = self._tensorize_tree(self._root)
         else:
             indices = np.arange(len(X))
             self._root = self._grow(indices, y, depth=0, rng=rng)
+            self._gpu_tree = None
 
         # Release GPU handles after fit; tree stores only CPU Node objects.
         self._X_gpu = None
@@ -160,9 +165,11 @@ class EmlSplitTreeRegressor:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float64)
-        out = np.empty(len(X), dtype=np.float64)
-        self._predict_vec(self._root, X, np.arange(len(X)), out)
-        return out
+        if self._gpu_tree is None or not torch.cuda.is_available():
+            out = np.empty(len(X), dtype=np.float64)
+            self._predict_cpu_fallback(self._root, X, np.arange(len(X)), out)
+            return out
+        return self._predict_gpu(X)
 
     # ------------------------------------------------------------------
     # internals
@@ -819,7 +826,7 @@ class EmlSplitTreeRegressor:
         return mask
 
     @classmethod
-    def _predict_vec(
+    def _predict_cpu_fallback(
         cls, node: Node, X: np.ndarray, idx: np.ndarray, out: np.ndarray
     ) -> None:
         """Recursively fill ``out[idx]`` by walking the tree in batched fashion.
@@ -859,5 +866,168 @@ class EmlSplitTreeRegressor:
         mask = cls._evaluate_split(node.split, X[idx])
         left_idx = idx[mask]
         right_idx = idx[~mask]
-        cls._predict_vec(node.left, X, left_idx, out)
-        cls._predict_vec(node.right, X, right_idx, out)
+        cls._predict_cpu_fallback(node.left, X, left_idx, out)
+        cls._predict_cpu_fallback(node.right, X, right_idx, out)
+
+    def _tensorize_tree(self, root: Node) -> dict:
+        """Walk the fitted Python tree once and emit a flat dict of CPU
+        tensors. The dict is moved to GPU on first predict call.
+        Only called in GPU-fit mode."""
+        nodes: list[list] = []  # entries: [node_id, node_obj, left_id, right_id]
+
+        def walk(node):
+            my_id = len(nodes)
+            nodes.append([my_id, node, -1, -1])
+            if isinstance(node, InternalNode):
+                left_id = walk(node.left)
+                right_id = walk(node.right)
+                nodes[my_id][2] = left_id
+                nodes[my_id][3] = right_id
+            return my_id
+
+        walk(root)
+        n_nodes = len(nodes)
+        K_leaf = max(1, self.k_leaf_eml)
+        K_split = max(1, self.k_eml)
+
+        node_kind = torch.zeros(n_nodes, dtype=torch.int8)
+        left_child = torch.full((n_nodes,), -1, dtype=torch.int32)
+        right_child = torch.full((n_nodes,), -1, dtype=torch.int32)
+        feature_idx = torch.zeros(n_nodes, dtype=torch.int32)
+        threshold = torch.zeros(n_nodes, dtype=torch.float32)
+        leaf_value = torch.zeros(n_nodes, dtype=torch.float32)
+        leaf_eml_descriptor = torch.zeros((n_nodes, 6), dtype=torch.int32)
+        split_eml_descriptor = torch.zeros((n_nodes, 6), dtype=torch.int32)
+        leaf_eta = torch.zeros(n_nodes, dtype=torch.float32)
+        leaf_bias = torch.zeros(n_nodes, dtype=torch.float32)
+        leaf_cap = torch.full((n_nodes,), float("inf"), dtype=torch.float32)
+        leaf_feat_subset = torch.zeros((n_nodes, K_leaf), dtype=torch.int32)
+        leaf_feat_mean = torch.zeros((n_nodes, K_leaf), dtype=torch.float32)
+        leaf_feat_std = torch.ones((n_nodes, K_leaf), dtype=torch.float32)
+        split_feat_subset = torch.zeros((n_nodes, K_split), dtype=torch.int32)
+
+        for nid, node, lc, rc in nodes:
+            left_child[nid] = lc
+            right_child[nid] = rc
+            if isinstance(node, LeafNode):
+                node_kind[nid] = 2
+                leaf_value[nid] = float(node.value)
+            elif isinstance(node, EmlLeafNode):
+                node_kind[nid] = 3
+                leaf_eta[nid] = float(node.eta)
+                leaf_bias[nid] = float(node.bias)
+                leaf_cap[nid] = float(node.cap)
+                for i, f in enumerate(node.feature_subset):
+                    leaf_feat_subset[nid, i] = int(f)
+                for i, m in enumerate(node.feature_mean):
+                    leaf_feat_mean[nid, i] = float(m)
+                for i, s in enumerate(node.feature_std):
+                    leaf_feat_std[nid, i] = float(s)
+                for i, c in enumerate(node.snapped.terminal_choices):
+                    leaf_eml_descriptor[nid, i] = int(c)
+            elif isinstance(node, InternalNode):
+                split = node.split
+                threshold[nid] = float(split.threshold)
+                if isinstance(split, RawSplit):
+                    node_kind[nid] = 0
+                    feature_idx[nid] = int(split.feature_idx)
+                else:  # EmlSplit
+                    node_kind[nid] = 1
+                    for i, c in enumerate(split.snapped.terminal_choices):
+                        split_eml_descriptor[nid, i] = int(c)
+                    for i, f in enumerate(split.feature_subset):
+                        split_feat_subset[nid, i] = int(f)
+
+        return {
+            "node_kind": node_kind, "left_child": left_child, "right_child": right_child,
+            "feature_idx": feature_idx, "threshold": threshold,
+            "leaf_value": leaf_value,
+            "leaf_eml_descriptor": leaf_eml_descriptor,
+            "split_eml_descriptor": split_eml_descriptor,
+            "split_feat_subset": split_feat_subset,
+            "leaf_eta": leaf_eta, "leaf_bias": leaf_bias, "leaf_cap": leaf_cap,
+            "leaf_feat_subset": leaf_feat_subset,
+            "leaf_feat_mean": leaf_feat_mean, "leaf_feat_std": leaf_feat_std,
+            "k_leaf_eml": K_leaf,
+            "k_split_eml": K_split,
+            "n_nodes": n_nodes,
+        }
+
+    def _predict_gpu(self, X: np.ndarray) -> np.ndarray:
+        """Tensorized GPU traversal of the fitted tree."""
+        device = torch.device("cuda")
+        if self._gpu_tree_device != device:
+            self._gpu_tree = {
+                k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+                for k, v in self._gpu_tree.items()
+            }
+            self._gpu_tree_device = device
+
+        X_gpu = torch.tensor(X, dtype=torch.float32, device=device)
+        n_samples = X_gpu.shape[0]
+        if n_samples == 0:
+            return np.zeros(0, dtype=np.float64)
+
+        t = self._gpu_tree
+        K_leaf = t["k_leaf_eml"]
+        K_split = t["k_split_eml"]
+        current = torch.zeros(n_samples, dtype=torch.long, device=device)
+
+        for _ in range(self.max_depth + 1):
+            kind_now = t["node_kind"][current]
+            is_internal = kind_now < 2
+            if not is_internal.any():
+                break
+            feat = t["feature_idx"][current]
+            thr = t["threshold"][current]
+            raw_vals = X_gpu.gather(1, feat.long().unsqueeze(1)).squeeze(1)
+            is_raw = (kind_now == 0)
+            is_eml_split = (kind_now == 1)
+
+            eml_vals = torch.zeros(n_samples, dtype=torch.float32, device=device)
+            if is_eml_split.any():
+                idx_e = is_eml_split.nonzero(as_tuple=True)[0]
+                node_ids_e = current[idx_e]
+                descs_e = t["split_eml_descriptor"][node_ids_e]
+                feat_subs_e = t["split_feat_subset"][node_ids_e]
+                X_e = X_gpu[idx_e].gather(1, feat_subs_e.long())
+                eml_out_e = evaluate_trees_torch_per_sample(descs_e, X_e, K_split)
+                eml_vals[idx_e] = eml_out_e
+
+            split_vals = torch.where(is_raw, raw_vals, eml_vals)
+            go_left = split_vals <= thr
+            next_node = torch.where(
+                go_left,
+                t["left_child"][current].long(),
+                t["right_child"][current].long(),
+            )
+            current = torch.where(is_internal, next_node, current)
+
+        kind_final = t["node_kind"][current]
+        out_gpu = torch.zeros(n_samples, dtype=torch.float32, device=device)
+
+        is_leaf_const = (kind_final == 2)
+        if is_leaf_const.any():
+            out_gpu[is_leaf_const] = t["leaf_value"][current[is_leaf_const]]
+
+        is_leaf_eml = (kind_final == 3)
+        if is_leaf_eml.any():
+            idx_l = is_leaf_eml.nonzero(as_tuple=True)[0]
+            node_ids_l = current[idx_l]
+            feat_subs = t["leaf_feat_subset"][node_ids_l]
+            means = t["leaf_feat_mean"][node_ids_l]
+            stds = t["leaf_feat_std"][node_ids_l]
+            descs = t["leaf_eml_descriptor"][node_ids_l]
+            eta = t["leaf_eta"][node_ids_l]
+            bias = t["leaf_bias"][node_ids_l]
+            cap = t["leaf_cap"][node_ids_l]
+
+            X_leaf_raw = X_gpu[idx_l].gather(1, feat_subs.long())
+            X_leaf_std = torch.clamp((X_leaf_raw - means) / stds, -3.0, 3.0)
+            eml_pred = evaluate_trees_torch_per_sample(descs, X_leaf_std, K_leaf)
+            pred = eta * eml_pred + bias
+            cap_finite = cap < float("inf")
+            pred = torch.where(cap_finite, torch.clamp(pred, -cap, cap), pred)
+            out_gpu[idx_l] = pred
+
+        return out_gpu.cpu().numpy().astype(np.float64)

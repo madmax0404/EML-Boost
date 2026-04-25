@@ -204,6 +204,67 @@ def evaluate_trees_torch(
     return output
 
 
+def evaluate_trees_torch_per_sample(
+    descriptor: torch.Tensor, X: torch.Tensor, k: int,
+) -> torch.Tensor:
+    """Evaluate one tree per sample.
+
+    descriptor: (m, 6) int32, one descriptor per sample
+    X: (m, k) float, one feature subset per sample
+    k: feature count per sample
+
+    Returns: (m,) float — sample i's descriptor evaluated on X[i].
+    """
+    m = descriptor.shape[0]
+    if m == 0:
+        return torch.empty(0, dtype=X.dtype, device=X.device)
+    dtype = X.dtype
+    device = X.device
+
+    leaf_terminals = torch.cat(
+        [torch.ones(m, 1, device=device, dtype=dtype), X], dim=1
+    )  # (m, k+1)
+
+    def gather_leaf(pos):  # pos in {2, 3, 4, 5}
+        idx = descriptor[:, pos].long().unsqueeze(1)  # (m, 1)
+        return leaf_terminals.gather(1, idx).squeeze(1)  # (m,)
+
+    v_c2 = gather_leaf(2)
+    v_c3 = gather_leaf(3)
+    v_c4 = gather_leaf(4)
+    v_c5 = gather_leaf(5)
+
+    node_0 = (
+        torch.exp(v_c2.clamp(-_EXP_CLAMP, _EXP_CLAMP))
+        - torch.log(v_c3.clamp(min=_LOG_EPS))
+    )
+    node_1 = (
+        torch.exp(v_c4.clamp(-_EXP_CLAMP, _EXP_CLAMP))
+        - torch.log(v_c5.clamp(min=_LOG_EPS))
+    )
+
+    c0 = descriptor[:, 0].long()
+    c1 = descriptor[:, 1].long()
+
+    left = torch.zeros(m, device=device, dtype=dtype)
+    right = torch.zeros(m, device=device, dtype=dtype)
+
+    left = left + (c0 == 0).to(dtype)
+    right = right + (c1 == 0).to(dtype)
+    for j in range(k):
+        feat_j = X[:, j]
+        left = left + ((c0 == j + 1).to(dtype)) * feat_j
+        right = right + ((c1 == j + 1).to(dtype)) * feat_j
+    left = left + ((c0 == k + 1).to(dtype)) * node_0
+    right = right + ((c1 == k + 1).to(dtype)) * node_1
+
+    output = (
+        torch.exp(left.clamp(-_EXP_CLAMP, _EXP_CLAMP))
+        - torch.log(right.clamp(min=_LOG_EPS))
+    )
+    return output
+
+
 # ---------------------------------------------------------------------------
 # Triton kernel
 # ---------------------------------------------------------------------------

@@ -622,3 +622,30 @@ def test_gpu_grow_matches_cpu_grow():
     # catastrophic failures (wrong shapes, NaNs, wrong dispatch) not exact
     # numerical agreement.
     assert diff_mse < 0.05, f"GPU vs CPU prediction MSE diff = {diff_mse:.4f}"
+
+
+def test_gpu_predict_matches_cpu_fallback():
+    """The GPU predict path and the CPU-fallback predict path must
+    produce numerically equivalent outputs on the same fitted tree."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(0)
+    X_tr = rng.uniform(-1, 1, size=(800, 3))
+    y_tr = np.exp(X_tr[:, 0]) + 0.5 * X_tr[:, 1] + 0.05 * rng.normal(size=800)
+    X_te = rng.uniform(-1, 1, size=(200, 3))
+
+    m = EmlSplitTreeRegressor(
+        max_depth=4, min_samples_leaf=20, n_eml_candidates=10, k_eml=2,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_gpu=True, random_state=0,
+    ).fit(X_tr, y_tr)
+
+    pred_gpu = m.predict(X_te)
+
+    saved_gpu_tree = m._gpu_tree
+    m._gpu_tree = None
+    pred_cpu = m.predict(X_te)
+    m._gpu_tree = saved_gpu_tree
+
+    np.testing.assert_allclose(pred_gpu, pred_cpu, rtol=1e-3, atol=1e-3)
