@@ -362,7 +362,9 @@ class EmlSplitTreeRegressor:
 
         all_feats = torch.cat(feat_cols, dim=1) if len(feat_cols) > 1 else feat_cols[0]
         best_idx, best_t, best_gain = gpu_histogram_split(
-            all_feats, y_node, self.n_bins, min_leaf_count=self.min_samples_leaf,
+            all_feats, y_node, self.n_bins,
+            min_leaf_count=self.min_samples_leaf,
+            leaf_l2=self.leaf_l2,
         )
 
         if best_gain <= 0:

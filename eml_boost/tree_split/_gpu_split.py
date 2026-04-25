@@ -42,6 +42,7 @@ def gpu_histogram_split_torch(
     y: torch.Tensor,
     n_bins: int,
     min_leaf_count: int = 1,
+    leaf_l2: float = 0.0,                       # NEW; defaults to 0.0 for backwards-compat
 ) -> tuple[int, float, float]:
     """Batched histogram split-finding on GPU.
 
@@ -110,7 +111,7 @@ def gpu_histogram_split_torch(
     total_sum = c_sum[:, -1:]                  # (d, 1)
     total_sq = c_sq[:, -1:]
     total_cnt = c_cnt[:, -1:]
-    total_sse = total_sq - total_sum ** 2 / total_cnt.clamp(min=1)
+    total_sse = total_sq - total_sum ** 2 / (total_cnt.clamp(min=1.0) + leaf_l2)
 
     # For split at bin boundary b (left = bins 0..b inclusive, right = b+1..),
     # left has c_cnt[:, b] samples, right has total - c_cnt[:, b].
@@ -123,8 +124,8 @@ def gpu_histogram_split_torch(
     right_sq = total_sq - left_sq
 
     legal = (left_cnt >= min_leaf_count) & (right_cnt >= min_leaf_count)
-    left_sse = left_sq - left_sum ** 2 / left_cnt.clamp(min=1)
-    right_sse = right_sq - right_sum ** 2 / right_cnt.clamp(min=1)
+    left_sse = left_sq - left_sum ** 2 / (left_cnt.clamp(min=1.0) + leaf_l2)
+    right_sse = right_sq - right_sum ** 2 / (right_cnt.clamp(min=1.0) + leaf_l2)
     gain = total_sse - left_sse - right_sse
     gain = torch.where(legal, gain, torch.full_like(gain, float("-inf")))
 
@@ -149,6 +150,7 @@ def gpu_histogram_split(
     y: torch.Tensor,
     n_bins: int,
     min_leaf_count: int = 1,
+    leaf_l2: float = 0.0,                       # NEW
 ) -> tuple[int, float, float]:
     """Best-split-finding via histogram. Tries Triton kernel first;
     falls back to the torch implementation on any error.
@@ -161,7 +163,7 @@ def gpu_histogram_split(
         from eml_boost.tree_split._gpu_split_triton import (
             gpu_histogram_split_triton,
         )
-        return gpu_histogram_split_triton(feats, y, n_bins, min_leaf_count)
+        return gpu_histogram_split_triton(feats, y, n_bins, min_leaf_count, leaf_l2)
     except Exception as exc:  # broad catch: any kernel-level failure (compile, OOM, illegal mem) falls back to torch; warn-once below surfaces the issue.
         global _TRITON_HIST_FALLBACK_WARNED
         if not _TRITON_HIST_FALLBACK_WARNED:
@@ -174,4 +176,4 @@ def gpu_histogram_split(
                 stacklevel=2,
             )
             _TRITON_HIST_FALLBACK_WARNED = True
-        return gpu_histogram_split_torch(feats, y, n_bins, min_leaf_count)
+        return gpu_histogram_split_torch(feats, y, n_bins, min_leaf_count, leaf_l2)
