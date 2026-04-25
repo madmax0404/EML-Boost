@@ -31,7 +31,9 @@ Numerical contract: every formula matches the torch oracle exactly.
   with ``bin_width = max(vmax - vmin, 1e-12) / n_bins``.
 * Gain at boundary ``b`` (left = bins ``0..b``, right = ``b+1..``):
   ``gain = total_sse - left_sse - right_sse`` where
-  ``sse(sum, sq, cnt) = sq - sum²/max(cnt, 1)``.
+  ``sse(sum, sq, cnt, leaf_l2) = sq - sum²/(max(cnt, 1) + leaf_l2)``.
+  The legality mask uses the raw (unmodified) ``cnt`` against
+  ``min_leaf_count`` — only the SSE denominator is shrunk.
 * Threshold: ``vmin[best_feat] + bin_width[best_feat] * (best_bin + 1)``.
 """
 
@@ -215,6 +217,12 @@ def gpu_histogram_split_triton(
     bin-edge math, gain formula, and threshold reconstruction exactly
     (modulo float32 reduction ordering, which is why the equivalence
     test allows ``rtol=5e-3`` on gain and ~1 bin width on threshold).
+
+    ``leaf_l2`` is the XGBoost-style ``reg_lambda``: the SSE denominator
+    becomes ``max(cnt, 1) + leaf_l2`` per side and per parent. At
+    ``leaf_l2 = 0`` the formula reduces to the prior ``max(cnt, 1)``
+    (bit-identical). It is passed as a runtime float to the kernel
+    (NOT ``tl.constexpr``) so a single compiled kernel handles every λ.
 
     Edge cases preserved from the torch oracle:
     * ``feats.ndim != 2`` → ``ValueError``.
