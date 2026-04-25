@@ -709,10 +709,10 @@ def test_histogram_split_triton_matches_torch():
 
 def test_gpu_speedup_on_synthetic_large():
     """Sanity: a 100k-row synthetic at depth=8 must complete in
-    under 60 seconds. The pre-port baseline (extrapolating from
-    cpu_small) was ~150-200s; post-port we measure ~50s. The 60s
-    threshold catches a 1.2× regression from current with margin
-    for hardware variance."""
+    under 30 seconds. The pre-port baseline (extrapolating from
+    cpu_small) was ~150-200s; post-first-port ~50s; post-A+B+C Triton
+    port ~1-2s. The 30s threshold catches a large regression from current
+    with substantial hardware-variance margin."""
     import time
     import torch
     if not torch.cuda.is_available():
@@ -731,4 +731,4 @@ def test_gpu_speedup_on_synthetic_large():
     elapsed = time.time() - t0
     pred = m.predict(X[:1000])
     assert pred.shape == (1000,)
-    assert elapsed < 60.0, f"GPU fit on 100k-row took {elapsed:.1f}s (target < 60s)"
+    assert elapsed < 30.0, f"GPU fit on 100k-row took {elapsed:.1f}s (target < 30s)"
