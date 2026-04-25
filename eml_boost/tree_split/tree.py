@@ -29,6 +29,7 @@ from eml_boost._triton_exhaustive import (
     get_descriptor_np,
     get_feature_mask_gpu,
     get_feature_mask_np,
+    get_valid_descriptors_np,
 )
 from eml_boost.symbolic.snap import SnappedTree
 from eml_boost.tree_split._gpu_split import gpu_histogram_split
@@ -855,13 +856,12 @@ class EmlSplitTreeRegressor:
     ) -> np.ndarray:
         """Uniform random draw from the non-constant depth-2 tree space.
 
-        Both the enumerated descriptor and the feature-mask are looked up
-        from process-global caches in _triton_exhaustive (keyed on (depth, k))
-        so the 6-nested for-loop and mask computation only run once per k.
+        The descriptor enumeration, the feature mask, AND the post-mask
+        valid array are all process-global cached in _triton_exhaustive
+        (keyed on (depth, k)) so this function only does the rng draw +
+        an indexing op per call.
         """
-        all_desc = get_descriptor_np(2, k)
-        mask = get_feature_mask_np(2, k)
-        valid_desc = all_desc[mask]
+        valid_desc = get_valid_descriptors_np(2, k)
         if len(valid_desc) == 0:
             return np.empty((0, 6), dtype=np.int32)
         idx = rng.integers(0, len(valid_desc), size=n_samples)

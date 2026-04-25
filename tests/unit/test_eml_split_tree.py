@@ -732,3 +732,21 @@ def test_gpu_speedup_on_synthetic_large():
     pred = m.predict(X[:1000])
     assert pred.shape == (1000,)
     assert elapsed < 30.0, f"GPU fit on 100k-row took {elapsed:.1f}s (target < 30s)"
+
+
+def test_valid_descriptor_cache_consistency():
+    """Cached valid descriptors must equal the masked enumeration, and
+    repeated calls must return the same array object (cache hit)."""
+    from eml_boost._triton_exhaustive import (
+        get_descriptor_np,
+        get_feature_mask_np,
+        get_valid_descriptors_np,
+    )
+    for k in (1, 2, 3):
+        all_desc = get_descriptor_np(2, k)
+        mask = get_feature_mask_np(2, k)
+        expected = all_desc[mask]
+        cached = get_valid_descriptors_np(2, k)
+        np.testing.assert_array_equal(expected, cached)
+        # Repeated call returns the SAME object (identity, not just equality).
+        assert get_valid_descriptors_np(2, k) is cached

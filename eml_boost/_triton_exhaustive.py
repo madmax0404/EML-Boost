@@ -56,6 +56,7 @@ _descriptor_cache: dict[tuple[int, int], np.ndarray] = {}
 _descriptor_gpu_cache: dict[tuple[int, int, str], torch.Tensor] = {}
 _feature_mask_cache: dict[tuple[int, int], np.ndarray] = {}
 _feature_mask_gpu_cache: dict[tuple[int, int, str], torch.Tensor] = {}
+_valid_desc_cache: dict[tuple[int, int], np.ndarray] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +431,26 @@ def get_feature_mask_np(depth: int, k: int) -> np.ndarray:
         desc = get_descriptor_np(depth, k)
         cached = descriptor_feature_mask_numpy(desc, k)
         _feature_mask_cache[key] = cached
+    return cached
+
+
+def get_valid_descriptors_np(depth: int, k: int) -> np.ndarray:
+    """Cached enumeration of non-constant depth-`depth` descriptors at k inputs.
+
+    Returns a contiguous (n_valid, 6) int32 array, where n_valid is the count
+    of descriptors that pass `get_feature_mask_np`. Process-global cache:
+    same array is returned on every call with the same (depth, k) — callers
+    must not mutate it.
+    """
+    if depth != 2:
+        raise ValueError("GPU path only supports depth=2")
+    key = (depth, k)
+    cached = _valid_desc_cache.get(key)
+    if cached is None:
+        all_desc = get_descriptor_np(depth, k)
+        mask = get_feature_mask_np(depth, k)
+        cached = np.ascontiguousarray(all_desc[mask])
+        _valid_desc_cache[key] = cached
     return cached
 
 
