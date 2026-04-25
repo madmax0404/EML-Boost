@@ -281,14 +281,18 @@ def test_stacked_blend_activates_on_clean_elementary_signal():
     X = rng.uniform(-1, 1, size=(800, 2))
     y = np.exp(X[:, 0]) + 0.01 * rng.normal(size=800)
 
+    # leaf_l2=0.0 pinned: this test is about stacked-blend activation, not L2
+    # regularization. With the new default of leaf_l2=1.0 the EML-leaf weights
+    # are shrunk hard enough to lose to constant leaves, which is the expected
+    # effect of strong regularization — not a stacked-blend bug.
     m_blend = EmlSplitTreeRegressor(
         max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
         k_leaf_eml=1, min_samples_leaf_eml=30,
-        use_stacked_blend=True, random_state=0,
+        use_stacked_blend=True, leaf_l2=0.0, random_state=0,
     ).fit(X, y)
     m_const = EmlSplitTreeRegressor(
         max_depth=3, min_samples_leaf=20, n_eml_candidates=0,
-        k_leaf_eml=0, use_stacked_blend=True, random_state=0,
+        k_leaf_eml=0, use_stacked_blend=True, leaf_l2=0.0, random_state=0,
     ).fit(X, y)
 
     mse_blend = _mse(m_blend.predict(X), y)
