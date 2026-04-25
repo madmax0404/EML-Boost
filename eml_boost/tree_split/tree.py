@@ -30,6 +30,7 @@ from eml_boost._triton_exhaustive import (
     get_descriptor_gpu,
     get_descriptor_np,
     get_feature_mask_gpu,
+    get_feature_mask_np,
 )
 from eml_boost.symbolic.snap import SnappedTree
 from eml_boost.tree_split._gpu_split import gpu_histogram_split
@@ -595,6 +596,10 @@ class EmlSplitTreeRegressor:
 
         desc_np = get_descriptor_np(2, k)
         desc_row = desc_np[best_idx]
+        # Batch the two per-best-tree scalar syncs (eta, bias) into one D2H
+        # transfer instead of two separate .item() calls.
+        scalars = torch.stack([eta[best_idx], bias[best_idx]]).cpu().numpy()
+        feat_stats = torch.stack([mean_x, std_x], dim=0).cpu().numpy()
         return EmlLeafNode(
             snapped=SnappedTree(
                 depth=2, k=k,
@@ -602,10 +607,10 @@ class EmlSplitTreeRegressor:
                 terminal_choices=tuple(int(v) for v in desc_row),
             ),
             feature_subset=tuple(int(v) for v in top_features),
-            feature_mean=tuple(float(v) for v in mean_x.cpu().numpy()),
-            feature_std=tuple(float(v) for v in std_x.cpu().numpy()),
-            eta=float(eta[best_idx].item()),
-            bias=float(bias[best_idx].item()),
+            feature_mean=tuple(float(v) for v in feat_stats[0]),
+            feature_std=tuple(float(v) for v in feat_stats[1]),
+            eta=float(scalars[0]),
+            bias=float(scalars[1]),
             cap=cap_leaf,
         )
 
@@ -850,9 +855,14 @@ class EmlSplitTreeRegressor:
     def _sample_descriptors(
         self, k: int, n_samples: int, rng: np.random.Generator
     ) -> np.ndarray:
-        """Uniform random draw from the non-constant depth-2 tree space."""
-        all_desc = enumerate_depth2_descriptor(k)
-        mask = descriptor_feature_mask_numpy(all_desc, k)
+        """Uniform random draw from the non-constant depth-2 tree space.
+
+        Both the enumerated descriptor and the feature-mask are looked up
+        from process-global caches in _triton_exhaustive (keyed on (depth, k))
+        so the 6-nested for-loop and mask computation only run once per k.
+        """
+        all_desc = get_descriptor_np(2, k)
+        mask = get_feature_mask_np(2, k)
         valid_desc = all_desc[mask]
         if len(valid_desc) == 0:
             return np.empty((0, 6), dtype=np.int32)
