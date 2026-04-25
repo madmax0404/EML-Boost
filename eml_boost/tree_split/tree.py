@@ -184,7 +184,7 @@ class EmlSplitTreeRegressor:
 
         # Compute global mean/std entirely on GPU; transfer only tiny vectors.
         mean_gpu = X_gpu.mean(dim=0)                              # (d,) float32
-        std_gpu = X_gpu.std(dim=0).clamp(min=1e-6)               # (d,) float32
+        std_gpu = X_gpu.std(dim=0, unbiased=False).clamp(min=1e-6)  # (d,) float32
         self._global_mean = mean_gpu.cpu().numpy().astype(np.float64)
         self._global_std = std_gpu.cpu().numpy().astype(np.float64)
 
