@@ -823,3 +823,50 @@ def test_fit_leaf_item_batching_preserves_predictions():
     train_mse = float(np.mean((m.predict(X) - y) ** 2))
     # Clean signal with var ~= 1.5; trivially-fit MSE should be well below.
     assert train_mse < 0.5
+
+
+def test_leaf_l2_zero_constant_leaves_bit_exact():
+    """At leaf_l2=0 with EML disabled, predictions must be bit-identical
+    to the pre-leaf-l2 implementation. Captures a CPU-path snapshot
+    (deterministic across runs); the new leaf_l2 plumbing is a
+    mathematical no-op at λ=0 and must produce identical floats."""
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(600, 5)).astype(np.float64)
+    y = (np.exp(X[:, 0]) + 0.5 * X[:, 1] - X[:, 2] ** 2
+         + 0.05 * rng.normal(size=600))
+    m = EmlSplitTreeRegressor(
+        max_depth=5,
+        min_samples_leaf=20,
+        n_eml_candidates=0,        # disable EML internal splits (CPU + GPU paths skip them)
+        k_eml=2,
+        k_leaf_eml=0,              # disable EML leaves (CPU can't anyway)
+        n_bins=256,
+        histogram_min_n=500,       # n=600 > 500 → exercises _best_threshold_histogram
+        use_gpu=False,             # CPU is deterministic
+        # leaf_l2=0.0,  # TODO: uncomment after Task 2 adds the leaf_l2 parameter
+        random_state=0,
+    ).fit(X, y)
+    pred = m.predict(X[:50])
+    expected = np.array([
+        0.5627627587866653, 2.278825489466951, 0.8875193065344579,
+        0.6441403028795676, 0.31114278292738023, 0.6441403028795676,
+        1.4345308027997778, -0.2691784705640178, 0.5627627587866653,
+        1.549529594650722, 0.8875193065344579, 0.31114278292738023,
+        -0.22544568770161022, 0.5627627587866653, 1.0810254167121462,
+        -0.2691784705640178, 1.4345308027997778, 1.4345308027997778,
+        2.278825489466951, 1.905560429219578, 0.5627627587866653,
+        0.5627627587866653, 0.5627627587866653, 1.0810254167121462,
+        -0.2691784705640178, 0.6441403028795676, 1.0810254167121462,
+        0.6441403028795676, 1.0810254167121462, 1.549529594650722,
+        -0.22544568770161022, 1.4345308027997778, 0.31114278292738023,
+        -0.2691784705640178, 0.6441403028795676, 1.4345308027997778,
+        1.549529594650722, -0.2691784705640178, 0.31114278292738023,
+        0.5627627587866653, 0.31114278292738023, 1.0810254167121462,
+        -0.22544568770161022, 0.6441403028795676, 1.549529594650722,
+        0.5627627587866653, 1.4345308027997778, 0.5627627587866653,
+        0.6441403028795676, 1.0810254167121462,
+    ], dtype=np.float64)
+    assert pred.shape == expected.shape, (
+        f"snapshot shape mismatch: {pred.shape} vs {expected.shape}"
+    )
+    np.testing.assert_array_equal(pred, expected)
