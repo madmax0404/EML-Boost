@@ -1,0 +1,68 @@
+         5810260 function calls (5689193 primitive calls) in 56.061 seconds
+
+   Ordered by: cumulative time
+   List reduced from 929 to 60 due to restriction <60>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       50    0.002    0.000   56.046    1.121 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:167(_fit_xy_gpu)
+ 23452/50    1.622    0.000   55.604    1.112 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:252(_grow_gpu)
+    11701    2.064    0.000   40.527    0.003 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:323(_find_best_split_gpu)
+    11701    0.946    0.000   27.692    0.002 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:850(_sample_descriptors)
+    11702   25.697    0.002   25.741    0.002 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/_triton_exhaustive.py:87(enumerate_depth2_descriptor)
+    11751    3.936    0.000   13.026    0.001 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:432(_fit_leaf)
+    11701    0.064    0.000    6.137    0.001 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/_gpu_split.py:147(gpu_histogram_split)
+    11701    0.796    0.000    6.071    0.001 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/_gpu_split_triton.py:202(gpu_histogram_split_triton)
+   137730    4.566    0.000    4.566    0.000 {method 'item' of 'torch._C.TensorBase' objects}
+    22486    1.305    0.000    3.361    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:830(_top_features_by_corr_gpu)
+    33271    0.201    0.000    2.244    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/_triton_exhaustive.py:446(evaluate_trees_triton)
+    10785    0.717    0.000    2.231    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:561(_select_leaf_gated)
+    56773    0.153    0.000    2.227    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/jit.py:370(<lambda>)
+    56773    0.527    0.000    2.073    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/jit.py:695(run)
+    54841    1.455    0.000    1.455    0.000 {built-in method torch.isfinite}
+    98897    1.095    0.000    1.095    0.000 {method 'sum' of 'torch._C.TensorBase' objects}
+    11702    0.108    0.000    0.886    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/_triton_exhaustive.py:381(descriptor_feature_mask_numpy)
+   122133    0.820    0.000    0.820    0.000 {method 'to' of 'torch._C.TensorBase' objects}
+    44972    0.048    0.000    0.749    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/torch/_tensor.py:896(norm)
+    44972    0.163    0.000    0.692    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/torch/functional.py:1685(norm)
+    70212    0.683    0.000    0.683    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/_triton_exhaustive.py:388(is_feat)
+    67658    0.660    0.000    0.660    0.000 {method 'mean' of 'torch._C.TensorBase' objects}
+    30541    0.541    0.000    0.541    0.000 {method 'cpu' of 'torch._C.TensorBase' objects}
+    56773    0.094    0.000    0.523    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/backends/nvidia/driver.py:700(__call__)
+    44972    0.515    0.000    0.515    0.000 {built-in method torch._C._linalg.linalg_vector_norm}
+    54841    0.458    0.000    0.458    0.000 {method 'abs' of 'torch._C.TensorBase' objects}
+    34187    0.425    0.000    0.425    0.000 {method 'max' of 'torch._C.TensorBase' objects}
+       50    0.380    0.008    0.403    0.008 /home/max1024/Workspaces/company/new-gbdt-angle/eml_boost/tree_split/tree.py:921(_tensorize_tree)
+    90044    0.186    0.000    0.368    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/jit.py:1074(__call__)
+    33271    0.352    0.000    0.352    0.000 {method 'all' of 'torch._C.TensorBase' objects}
+        1    0.107    0.107    0.275    0.275 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:1778(_register_triton_kernels)
+    24052    0.258    0.000    0.258    0.000 {built-in method torch.zeros}
+    22486    0.254    0.000    0.254    0.000 {built-in method torch.topk}
+        8    0.000    0.000    0.248    0.031 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/jit.py:826(_do_compile)
+        8    0.000    0.000    0.248    0.031 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/compiler/compiler.py:226(compile)
+        8    0.000    0.000    0.239    0.030 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/cache.py:307(get_cache_key)
+        1    0.000    0.000    0.214    0.214 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/cache.py:271(triton_key)
+    21570    0.209    0.000    0.209    0.000 {built-in method torch.where}
+    21570    0.197    0.000    0.197    0.000 {built-in method torch.clamp}
+    11701    0.195    0.000    0.195    0.000 {method 'min' of 'torch._C.TensorBase' objects}
+    65626    0.193    0.000    0.193    0.000 {method 'unsqueeze' of 'torch._C.TensorBase' objects}
+      397    0.189    0.000    0.189    0.000 {method 'update' of '_hashlib.HASH' objects}
+   125747    0.183    0.000    0.183    0.000 {method 'contiguous' of 'torch._C.TensorBase' objects}
+   341938    0.154    0.000    0.181    0.000 {built-in method triton._C.libtriton.native_specialize_impl}
+    33271    0.051    0.000    0.166    0.000 <string>:2(dynamic_func)
+    33271    0.154    0.000    0.154    0.000 {built-in method torch.empty}
+    11701    0.151    0.000    0.151    0.000 {built-in method torch.cat}
+    10885    0.021    0.000    0.151    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/torch/_tensor.py:40(wrapped)
+       55    0.000    0.000    0.150    0.003 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:161(is_available)
+       55    0.150    0.003    0.150    0.003 {built-in method torch._C._cuda_getDeviceCount}
+    10836    0.130    0.000    0.149    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/numpy/_core/_ufunc_config.py:496(inner)
+   180088    0.091    0.000    0.147    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/language/core.py:346(_unwrap_if_constexpr)
+    56773    0.101    0.000    0.146    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/runtime/jit.py:563(compute_cache_key)
+    11851    0.138    0.000    0.138    0.000 {built-in method torch.full}
+    10885    0.126    0.000    0.126    0.000 {method 'pow' of 'torch._C.TensorBase' objects}
+    56773    0.089    0.000    0.125    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/triton/compiler/compiler.py:479(launch_metadata)
+    11751    0.123    0.000    0.123    0.000 {method 'clamp' of 'torch._C.TensorBase' objects}
+    30541    0.119    0.000    0.119    0.000 {method 'numpy' of 'torch._C.TensorBase' objects}
+    56793    0.040    0.000    0.116    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:1146(current_device)
+    11702    0.016    0.000    0.114    0.000 /home/max1024/Workspaces/company/new-gbdt-angle/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3287(prod)
+
+

@@ -1,0 +1,26 @@
+[
+  {
+    "dataset": "1096_FacultySalaries",
+    "seed": "ALL_SEEDS",
+    "config": "data_fetch",
+    "error_type": "ValueError",
+    "error_message": "Dataset not found in PMLB.",
+    "error_phase": "fetch"
+  },
+  {
+    "dataset": "195_auto_price",
+    "seed": "ALL_SEEDS",
+    "config": "data_fetch",
+    "error_type": "ValueError",
+    "error_message": "Dataset not found in PMLB.",
+    "error_phase": "fetch"
+  },
+  {
+    "dataset": "207_autoPrice",
+    "seed": "ALL_SEEDS",
+    "config": "data_fetch",
+    "error_type": "ValueError",
+    "error_message": "Dataset not found in PMLB.",
+    "error_phase": "fetch"
+  }
+]
