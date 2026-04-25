@@ -5,6 +5,48 @@
 **Runtime:** 56 min 24 s on RTX 3090 (1650 fresh fits in this run = 110 datasets × 5 seeds × 3 models; 9 additional datasets — 6 from earlier runs + 3 from the post-microopts sanity bench — were resumed from `summary.csv`. Final coverage: 119 datasets × 5 × 3 = 1785 fits.)
 **Scripts:** `experiments/run_experiment15_full_pmlb.py`
 
+## Methodological note (added 2026-04-25, post-Exp-17)
+
+The headline numbers below (89% within 10%, 83% outright wins vs XGBoost,
+median ratio 0.912) were obtained under an OFF-THE-SHELF DEFAULTS
+comparison, not a matched-hyperparameter one. SB ran at
+`min_samples_leaf=20` with `patience=15` early stopping; XGB ran at
+`min_child_weight=1` (default), `reg_lambda=1.0` (default), and no
+early stopping; LGB ran at `min_data_in_leaf=20` with `reg_lambda=0`
+and no early stopping.
+
+The mismatches biased the comparison in opposite directions on
+different dataset regimes:
+- On medium/large-n datasets, SB's `msl=20` acted as a regularizer
+  XGB lacked, contributing to SB's 83% wins.
+- On tiny-n datasets (n_train < 200), SB's `msl=20` blocked the algorithm
+  from making the fine-grained leaf decisions XGB could (with `mcw=1`),
+  contributing to all 13 of SB's losses including the 3 catastrophic
+  cases.
+
+Experiment 17 (`experiments/experiment17/report.md`,
+`docs/superpowers/specs/2026-04-25-experiment17-matched-revalidation-design.md`)
+re-ran the same 119-dataset suite under matched hyperparameters
+(leaf-floor=1, L2 leaf-weight=1.0, early-stopping=patience-15 with
+15% inner-val) across all three algorithms. Refer to that experiment
+for the methodologically-defensible baseline.
+
+Key shifts at matched hyperparameters:
+- 0/119 catastrophic (was 3/119) — all 3 catastrophic Exp-15 datasets
+  became SB outright wins (ratios 0.747, 0.732, 0.836).
+- Within-10% expanded to 98.3% (was 89.1%).
+- Outright wins shrank to 78.2% (was 83.2%) — the predicted
+  "msl=20-as-regularizer advantage" loss on medium/large data.
+- Median ratio shifted to 0.966 (was 0.912).
+- vs LGB: SB pulled ahead, 95/119 wins at median ratio 0.967 (was
+  67/119 wins at 0.994 — LGB's default reg_lambda=0 was the source
+  of LGB's prior advantage on medium/large data).
+
+The off-the-shelf comparison reported below is still meaningful
+("which library is better with no per-dataset tuning?") but should
+not be presented as architectural superiority of SB without the
+Exp-17 caveat.
+
 ## What the experiment was about
 
 Experiments 11-14 established the SplitBoost defaults (`max_depth=8, max_rounds=200, n_eml_candidates=10, k_eml=3, k_leaf_eml=1, leaf_eml_cap_k=2.0, min_samples_leaf_eml=30`) and showed they delivered 6/7 within 10% of XGBoost on a curated 7-dataset benchmark, with most ratios clearly under parity. Experiment 15 takes that exact configuration to the full PMLB regression suite — 122 datasets × 5 seeds × 3 models — to convert the small-n curated story into a proper aggregate distribution. No hyperparameter tuning per dataset; this is a fixed-config benchmark.
