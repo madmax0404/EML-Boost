@@ -22,8 +22,6 @@ import torch
 import triton
 
 from eml_boost._triton_exhaustive import (
-    descriptor_feature_mask_numpy,
-    enumerate_depth2_descriptor,
     evaluate_trees_torch,
     evaluate_trees_torch_per_sample,
     evaluate_trees_triton,
