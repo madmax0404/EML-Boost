@@ -911,3 +911,46 @@ def test_hist_split_triton_matches_torch_with_l2():
             float(gain_t), float(gain_tri), rtol=5e-3,
             err_msg=f"gain mismatch at lam={lam}",
         )
+
+
+def test_leaf_l2_gpu_cpu_equivalence_at_one():
+    """At leaf_l2=1.0, the GPU and CPU pipelines must produce equivalent
+    predictions within float32 tolerance. Validates that the new gain
+    formula and constant-leaf shrinkage are consistent across paths.
+
+    GPU uses float32 histogram; CPU uses float64. At leaf_l2=1.0, the
+    split-gain regularizer changes absolute gain values, but the ranking
+    across splits stays consistent so both paths build very similar trees.
+    We use MSE < 0.05 (same threshold as test_gpu_grow_matches_cpu_grow)
+    rather than element-wise rtol: histogram float32 vs float64 precision
+    means adjacent-gain splits can be chosen differently, giving ~0.01
+    element-wise differences even on the same tree structure.
+    """
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 4)).astype(np.float64)
+    y = (np.exp(X[:, 0]) + 0.5 * X[:, 1] + 0.05 * rng.normal(size=800))
+
+    common_kwargs = dict(
+        max_depth=4,
+        min_samples_leaf=20,
+        n_eml_candidates=10,
+        k_eml=2,
+        k_leaf_eml=0,                # CPU can't do EML leaves; disable for fair comparison
+        n_bins=256,
+        histogram_min_n=500,
+        leaf_l2=1.0,
+        random_state=0,
+    )
+    m_gpu = EmlSplitTreeRegressor(**common_kwargs, use_gpu=True).fit(X, y)
+    m_cpu = EmlSplitTreeRegressor(**common_kwargs, use_gpu=False).fit(X, y)
+
+    pred_gpu = m_gpu.predict(X[:100])
+    pred_cpu = m_cpu.predict(X[:100])
+    diff_mse = float(np.mean((pred_gpu - pred_cpu) ** 2))
+    assert diff_mse < 0.05, (
+        f"GPU vs CPU prediction MSE at leaf_l2=1.0: {diff_mse:.4f} (expected < 0.05). "
+        "Large divergence indicates a formula inconsistency between paths."
+    )

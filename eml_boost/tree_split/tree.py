@@ -289,10 +289,14 @@ class EmlSplitTreeRegressor:
         best_mask: np.ndarray | None = None
 
         use_histogram = len(y) >= self.histogram_min_n
-        threshold_fn = self._best_threshold_histogram if use_histogram else self._best_threshold
+
+        def _threshold(values: np.ndarray) -> tuple[float, float]:
+            if use_histogram:
+                return self._best_threshold_histogram(values, y, leaf_l2=self.leaf_l2)
+            return self._best_threshold(values, y, leaf_l2=self.leaf_l2)
 
         for j in range(n_features):
-            t, gain = threshold_fn(X[:, j], y)
+            t, gain = _threshold(X[:, j])
             if gain > best_gain:
                 best_gain = gain
                 best_split = RawSplit(feature_idx=j, threshold=float(t))
@@ -308,7 +312,7 @@ class EmlSplitTreeRegressor:
             for c_idx in range(candidates.shape[0]):
                 if not finite[c_idx]:
                     continue
-                t, gain = threshold_fn(eml_values[c_idx], y)
+                t, gain = _threshold(eml_values[c_idx])
                 if gain > best_gain:
                     best_gain = gain
                     best_split = EmlSplit(
@@ -395,7 +399,7 @@ class EmlSplitTreeRegressor:
         return split, float(best_gain), left_mask
 
     @staticmethod
-    def _best_threshold(values: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    def _best_threshold(values: np.ndarray, y: np.ndarray, leaf_l2: float = 0.0) -> tuple[float, float]:
         """Exact sorted-scan best threshold for squared-error gain.
 
         Returns (threshold, gain). Gain is the reduction in total SSE from
@@ -421,12 +425,14 @@ class EmlSplitTreeRegressor:
         i = np.arange(1, n)
         left_sum = cumsum[i - 1]
         left_sq = cumsum_sq[i - 1]
-        left_sse = left_sq - left_sum ** 2 / i
+        left_sse = left_sq - left_sum ** 2 / (np.maximum(i, 1.0) + leaf_l2)
         right_sum = total_sum - left_sum
         right_sq = total_sq - left_sq
-        right_sse = right_sq - right_sum ** 2 / (n - i)
+        right_sse = right_sq - right_sum ** 2 / (np.maximum(n - i, 1.0) + leaf_l2)
 
-        gain = total_sse - left_sse - right_sse
+        # Recompute total_sse with the same regularizer for symmetric subtraction.
+        total_sse_reg = total_sq - total_sum ** 2 / (np.maximum(n, 1.0) + leaf_l2)
+        gain = total_sse_reg - left_sse - right_sse
         # Only legal splits are those where the two adjacent values differ.
         legal = v[1:] > v[:-1]
         gain = np.where(legal, gain, -np.inf)
@@ -789,7 +795,7 @@ class EmlSplitTreeRegressor:
         )
 
     def _best_threshold_histogram(
-        self, values: np.ndarray, y: np.ndarray
+        self, values: np.ndarray, y: np.ndarray, leaf_l2: float = 0.0,
     ) -> tuple[float, float]:
         """Histogram-based split-finding. Approximate, O(n + B) per feature.
 
@@ -826,7 +832,7 @@ class EmlSplitTreeRegressor:
         total_count = c_count[-1]
         total_sum = c_sum[-1]
         total_sq = c_sq[-1]
-        total_sse = total_sq - total_sum ** 2 / total_count
+        total_sse = total_sq - total_sum ** 2 / (np.maximum(total_count, 1.0) + leaf_l2)
 
         # For split at bin boundary b (samples with bin<=b go left):
         # left_count = c_count[b], right_count = total_count - c_count[b].
@@ -841,8 +847,8 @@ class EmlSplitTreeRegressor:
         # Guard against empty side
         legal = (left_count >= 1) & (right_count >= 1)
         with np.errstate(divide="ignore", invalid="ignore"):
-            left_sse = left_sq - left_sum ** 2 / left_count
-            right_sse = right_sq - right_sum ** 2 / right_count
+            left_sse = left_sq - left_sum ** 2 / (np.maximum(left_count, 1.0) + leaf_l2)
+            right_sse = right_sq - right_sum ** 2 / (np.maximum(right_count, 1.0) + leaf_l2)
         gain = total_sse - left_sse - right_sse
         gain = np.where(legal, gain, -np.inf)
 
