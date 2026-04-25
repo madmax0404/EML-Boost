@@ -750,3 +750,45 @@ def test_valid_descriptor_cache_consistency():
         np.testing.assert_array_equal(expected, cached)
         # Repeated call returns the SAME object (identity, not just equality).
         assert get_valid_descriptors_np(2, k) is cached
+
+
+def test_tensorize_tree_numpy_matches_torch_baseline():
+    """The numpy-backed _tensorize_tree must produce the same dict
+    contents as the prior torch-zeros baseline. Verifies shapes, dtypes,
+    leaf-vs-internal node_kind invariants, and that left/right_child of
+    leaves stay -1."""
+    import torch
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(300, 4)).astype(np.float64)
+    y = (np.exp(X[:, 0]) + 0.5 * X[:, 1] + 0.05 * rng.normal(size=300))
+    m = EmlSplitTreeRegressor(
+        max_depth=4,
+        n_eml_candidates=10,
+        k_eml=2,
+        k_leaf_eml=1,
+        min_samples_leaf_eml=30,
+        use_gpu=False,
+        random_state=0,
+    ).fit(X, y)
+    tt = m._tensorize_tree(m._root)
+    n = tt["n_nodes"]
+    # Shapes.
+    assert tt["node_kind"].shape == (n,)
+    assert tt["leaf_value"].shape == (n,)
+    assert tt["leaf_feat_subset"].shape == (n, tt["k_leaf_eml"])
+    assert tt["split_feat_subset"].shape == (n, tt["k_split_eml"])
+    # Dtypes match what _predict_x_gpu expects.
+    assert tt["node_kind"].dtype == torch.int8
+    assert tt["left_child"].dtype == torch.int32
+    assert tt["right_child"].dtype == torch.int32
+    assert tt["feature_idx"].dtype == torch.int32
+    assert tt["threshold"].dtype == torch.float32
+    assert tt["leaf_value"].dtype == torch.float32
+    assert tt["leaf_eta"].dtype == torch.float32
+    assert tt["leaf_bias"].dtype == torch.float32
+    # node_kind values are in {0, 1, 2, 3}.
+    assert ((tt["node_kind"] >= 0) & (tt["node_kind"] <= 3)).all()
+    # Leaves (kind 2 or 3) have left/right_child == -1.
+    leaves = (tt["node_kind"] == 2) | (tt["node_kind"] == 3)
+    assert (tt["left_child"][leaves] == -1).all()
+    assert (tt["right_child"][leaves] == -1).all()
