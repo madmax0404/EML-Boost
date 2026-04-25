@@ -649,3 +649,30 @@ def test_gpu_predict_matches_cpu_fallback():
     m._gpu_tree = saved_gpu_tree
 
     np.testing.assert_allclose(pred_gpu, pred_cpu, rtol=1e-3, atol=1e-3)
+
+
+def test_gpu_speedup_on_synthetic_large():
+    """Sanity: a 100k-row synthetic at depth=8 must complete in
+    under 60 seconds. The pre-port baseline (extrapolating from
+    cpu_small) was ~150-200s; post-port we measure ~50s. The 60s
+    threshold catches a 1.2× regression from current with margin
+    for hardware variance."""
+    import time
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(100_000, 10)).astype(np.float64)
+    y = X[:, 0] + 0.5 * X[:, 1] - 0.3 * X[:, 2] ** 2 + 0.1 * rng.normal(size=100_000)
+
+    m = EmlSplitTreeRegressor(
+        max_depth=8, min_samples_leaf=20, n_eml_candidates=10, k_eml=3,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_gpu=True, random_state=0,
+    )
+    t0 = time.time()
+    m.fit(X, y)
+    elapsed = time.time() - t0
+    pred = m.predict(X[:1000])
+    assert pred.shape == (1000,)
+    assert elapsed < 60.0, f"GPU fit on 100k-row took {elapsed:.1f}s (target < 60s)"
