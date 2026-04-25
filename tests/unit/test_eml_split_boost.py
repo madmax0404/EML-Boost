@@ -74,3 +74,22 @@ def test_raw_only_and_eml_mode_both_work(n_eml):
     pred = m.predict(X)
     baseline = _rmse(np.full_like(y, y.mean()), y)
     assert _rmse(pred, y) < 0.5 * baseline
+
+
+def test_xcache_boost_loop_runs_cleanly():
+    """The GPU-cached boost loop must complete and produce sensible
+    predictions on a clean elementary signal."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(800, 4))
+    y = np.exp(X[:, 0]) + 0.5 * X[:, 1] + 0.05 * rng.normal(size=800)
+    m = EmlSplitBoostRegressor(
+        max_rounds=50, max_depth=4, learning_rate=0.1,
+        n_eml_candidates=10, k_eml=2, use_gpu=True, random_state=0,
+    ).fit(X, y)
+    pred = m.predict(X)
+    assert np.all(np.isfinite(pred))
+    train_mse = float(np.mean((pred - y) ** 2))
+    assert train_mse < 0.5, f"train_mse = {train_mse:.4f}"

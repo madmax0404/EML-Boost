@@ -9,6 +9,7 @@ held-out inner validation split.
 from __future__ import annotations
 
 import numpy as np
+import torch
 from sklearn.base import BaseEstimator, RegressorMixin
 
 from eml_boost.tree_split.tree import EmlSplitTreeRegressor
@@ -109,7 +110,6 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
         rng = np.random.default_rng(self.random_state)
-
         self._F_0 = float(y.mean())
         self._trees: list[EmlSplitTreeRegressor] = []
         self._history: list[dict] = []
@@ -125,17 +125,27 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
             X_tr, y_tr = X, y
             X_va, y_va = None, None
 
+        tree_seeds = [int(s) for s in rng.integers(0, 2**31 - 1, size=self.max_rounds)]
+
+        if self.use_gpu and torch.cuda.is_available():
+            return self._fit_gpu_loop(X_tr, y_tr, X_va, y_va, tree_seeds, patience)
+        return self._fit_cpu_loop(X_tr, y_tr, X_va, y_va, tree_seeds, patience)
+
+    def _fit_cpu_loop(
+        self,
+        X_tr: np.ndarray,
+        y_tr: np.ndarray,
+        X_va: "np.ndarray | None",
+        y_va: "np.ndarray | None",
+        tree_seeds: list,
+        patience: int,
+    ) -> "EmlSplitBoostRegressor":
+        """CPU boost loop (numpy throughout). Existing behavior preserved."""
         F_tr = np.full(len(X_tr), self._F_0)
-        F_va = (
-            np.full(len(X_va), self._F_0)
-            if X_va is not None
-            else None
-        )
+        F_va = np.full(len(X_va), self._F_0) if X_va is not None else None
 
         best_val_mse = float("inf")
         since_improve = 0
-        # Derive per-tree seeds so each round's sampler is reproducible.
-        tree_seeds = [int(s) for s in rng.integers(0, 2**31 - 1, size=self.max_rounds)]
 
         for m in range(self.max_rounds):
             r = y_tr - F_tr
@@ -163,9 +173,82 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
             train_mse = float(np.mean((y_tr - F_tr) ** 2))
 
             record = {"round": m, "train_mse": train_mse}
-            if F_va is not None and X_va is not None:
+            if F_va is not None and X_va is not None and y_va is not None:
                 F_va = F_va + self.learning_rate * tree.predict(X_va)
                 val_mse = float(np.mean((y_va - F_va) ** 2))
+                record["val_mse"] = val_mse
+                if val_mse < best_val_mse - 1e-10:
+                    best_val_mse = val_mse
+                    since_improve = 0
+                else:
+                    since_improve += 1
+                    if patience > 0 and since_improve >= patience:
+                        self._history.append(record)
+                        break
+            self._history.append(record)
+
+        return self
+
+    def _fit_gpu_loop(
+        self,
+        X_tr: np.ndarray,
+        y_tr: np.ndarray,
+        X_va: "np.ndarray | None",
+        y_va: "np.ndarray | None",
+        tree_seeds: list,
+        patience: int,
+    ) -> "EmlSplitBoostRegressor":
+        """GPU-resident boost loop. X_tr, y_tr, and F_tr are allocated once
+        on GPU and reused across all rounds, eliminating per-round H2D copies."""
+        device = torch.device("cuda")
+        X_tr_gpu = torch.tensor(X_tr, dtype=torch.float32, device=device)
+        y_tr_gpu = torch.tensor(y_tr, dtype=torch.float32, device=device)
+        F_tr_gpu = torch.full_like(y_tr_gpu, self._F_0)
+
+        X_va_gpu = (
+            torch.tensor(X_va, dtype=torch.float32, device=device)
+            if X_va is not None else None
+        )
+        y_va_gpu = (
+            torch.tensor(y_va, dtype=torch.float32, device=device)
+            if y_va is not None else None
+        )
+        F_va_gpu = (
+            torch.full_like(y_va_gpu, self._F_0) if y_va_gpu is not None else None
+        )
+
+        best_val_mse = float("inf")
+        since_improve = 0
+
+        for m in range(self.max_rounds):
+            r_gpu = y_tr_gpu - F_tr_gpu
+            tree = EmlSplitTreeRegressor(
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                n_eml_candidates=self.n_eml_candidates,
+                k_eml=self.k_eml,
+                eml_depth=self.eml_depth,
+                n_bins=self.n_bins,
+                histogram_min_n=self.histogram_min_n,
+                use_gpu=self.use_gpu,
+                k_leaf_eml=self.k_leaf_eml,
+                min_samples_leaf_eml=self.min_samples_leaf_eml,
+                leaf_eml_gain_threshold=self.leaf_eml_gain_threshold,
+                leaf_eml_ridge=self.leaf_eml_ridge,
+                leaf_eml_cap_k=self.leaf_eml_cap_k,
+                use_stacked_blend=self.use_stacked_blend,
+                random_state=tree_seeds[m],
+            )._fit_xy_gpu(X_tr_gpu, r_gpu)
+            self._trees.append(tree)
+
+            tree_pred_tr_gpu = tree._predict_x_gpu(X_tr_gpu)
+            F_tr_gpu = F_tr_gpu + self.learning_rate * tree_pred_tr_gpu
+            train_mse = float(((y_tr_gpu - F_tr_gpu) ** 2).mean().item())
+            record = {"round": m, "train_mse": train_mse}
+
+            if F_va_gpu is not None and X_va_gpu is not None and y_va_gpu is not None:
+                F_va_gpu = F_va_gpu + self.learning_rate * tree._predict_x_gpu(X_va_gpu)
+                val_mse = float(((y_va_gpu - F_va_gpu) ** 2).mean().item())
                 record["val_mse"] = val_mse
                 if val_mse < best_val_mse - 1e-10:
                     best_val_mse = val_mse

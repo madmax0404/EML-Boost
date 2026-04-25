@@ -163,6 +163,54 @@ class EmlSplitTreeRegressor:
         self._device = None
         return self
 
+    def _fit_xy_gpu(
+        self, X_gpu: "torch.Tensor", y_gpu: "torch.Tensor",
+    ) -> "EmlSplitTreeRegressor":
+        """GPU-input variant of fit(). X_gpu and y_gpu are caller-owned
+        tensors; this method borrows them during fit and clears its own
+        references at end (does NOT free the caller's storage).
+
+        Avoids the full D2H transfer of X by computing global mean/std on GPU
+        and only transferring two small (n_features,) vectors to CPU for
+        _global_mean/_global_std. _X_cpu is set to a sentinel array of correct
+        shape to satisfy the shape check in _fit_leaf without copying X data."""
+        if not torch.cuda.is_available():
+            raise RuntimeError("_fit_xy_gpu requires CUDA")
+        device = X_gpu.device
+        n, d = X_gpu.shape
+
+        rng = np.random.default_rng(self.random_state)
+        self._leaf_stats = []
+
+        # Compute global mean/std entirely on GPU; transfer only tiny vectors.
+        mean_gpu = X_gpu.mean(dim=0)                              # (d,) float32
+        std_gpu = X_gpu.std(dim=0).clamp(min=1e-6)               # (d,) float32
+        self._global_mean = mean_gpu.cpu().numpy().astype(np.float64)
+        self._global_std = std_gpu.cpu().numpy().astype(np.float64)
+
+        # _X_cpu is only used for shape[1] (n_raw) in _fit_leaf; a zero
+        # sentinel of the right shape satisfies that without copying X data.
+        self._X_cpu = np.empty((0, d), dtype=np.float64)
+
+        self._device = device
+        self._X_gpu = X_gpu
+        self._y_gpu = y_gpu
+        self._global_mean_gpu = mean_gpu
+        self._global_std_gpu = std_gpu
+
+        indices_gpu = torch.arange(n, dtype=torch.long, device=device)
+        self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+        self._gpu_tree = self._tensorize_tree(self._root)
+
+        # Release references to caller-owned tensors but keep the tensorized
+        # tree (CPU-side; will move to GPU lazily on first predict).
+        self._X_gpu = None
+        self._y_gpu = None
+        self._global_mean_gpu = None
+        self._global_std_gpu = None
+        self._device = None
+        return self
+
     def predict(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float64)
         if self._gpu_tree is None or not torch.cuda.is_available():
@@ -953,9 +1001,11 @@ class EmlSplitTreeRegressor:
             "n_nodes": n_nodes,
         }
 
-    def _predict_gpu(self, X: np.ndarray) -> np.ndarray:
-        """Tensorized GPU traversal of the fitted tree."""
-        device = torch.device("cuda")
+    def _predict_x_gpu(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
+        """Tensorized GPU traversal of the fitted tree using a caller-owned
+        GPU tensor. Returns a GPU float32 tensor of shape (n_samples,).
+        Does NOT transfer to CPU/numpy."""
+        device = X_gpu.device
         if self._gpu_tree_device != device:
             self._gpu_tree = {
                 k: (v.to(device) if isinstance(v, torch.Tensor) else v)
@@ -963,10 +1013,9 @@ class EmlSplitTreeRegressor:
             }
             self._gpu_tree_device = device
 
-        X_gpu = torch.tensor(X, dtype=torch.float32, device=device)
         n_samples = X_gpu.shape[0]
         if n_samples == 0:
-            return np.zeros(0, dtype=np.float64)
+            return torch.zeros(0, dtype=torch.float32, device=device)
 
         t = self._gpu_tree
         K_leaf = t["k_leaf_eml"]
@@ -1030,4 +1079,11 @@ class EmlSplitTreeRegressor:
             pred = torch.where(cap_finite, torch.clamp(pred, -cap, cap), pred)
             out_gpu[idx_l] = pred
 
-        return out_gpu.cpu().numpy().astype(np.float64)
+        return out_gpu
+
+    def _predict_gpu(self, X: np.ndarray) -> np.ndarray:
+        """numpy-input GPU predict. Wraps _predict_x_gpu with the H2D
+        transfer."""
+        device = torch.device("cuda")
+        X_gpu = torch.tensor(X, dtype=torch.float32, device=device)
+        return self._predict_x_gpu(X_gpu).cpu().numpy().astype(np.float64)
