@@ -591,3 +591,34 @@ def test_top_features_by_corr_gpu_matches_numpy():
     gpu_top = EmlSplitTreeRegressor._top_features_by_corr_gpu(X_gpu, y_gpu, k=3)
 
     assert sorted(np_top.tolist()) == sorted(gpu_top.cpu().tolist())
+
+
+def test_gpu_grow_matches_cpu_grow():
+    """The new GPU-native fit pipeline must produce equivalent
+    predictions to the CPU pipeline on the same data + seed."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(500, 4))
+    y = np.exp(X[:, 0]) + 0.5 * X[:, 1] + 0.05 * rng.normal(size=500)
+
+    m_gpu = EmlSplitTreeRegressor(
+        max_depth=4, min_samples_leaf=20, n_eml_candidates=5, k_eml=2,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_gpu=True, random_state=0,
+    ).fit(X, y)
+    m_cpu = EmlSplitTreeRegressor(
+        max_depth=4, min_samples_leaf=20, n_eml_candidates=5, k_eml=2,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_gpu=False, random_state=0,
+    ).fit(X, y)
+
+    pred_gpu = m_gpu.predict(X)
+    pred_cpu = m_cpu.predict(X)
+    diff_mse = float(np.mean((pred_gpu - pred_cpu) ** 2))
+    # GPU path uses float32 histogram splits; CPU uses float64 exact scan.
+    # Structural divergence of ~0.02 is expected — this threshold detects
+    # catastrophic failures (wrong shapes, NaNs, wrong dispatch) not exact
+    # numerical agreement.
+    assert diff_mse < 0.05, f"GPU vs CPU prediction MSE diff = {diff_mse:.4f}"

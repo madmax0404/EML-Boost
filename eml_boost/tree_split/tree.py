@@ -141,8 +141,14 @@ class EmlSplitTreeRegressor:
             self._global_mean_gpu = None
             self._global_std_gpu = None
 
-        indices = np.arange(len(X))
-        self._root: Node = self._grow(indices, y, depth=0, rng=rng)
+        if self._device is not None:
+            indices_gpu = torch.arange(
+                len(X), dtype=torch.long, device=self._device,
+            )
+            self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+        else:
+            indices = np.arange(len(X))
+            self._root = self._grow(indices, y, depth=0, rng=rng)
 
         # Release GPU handles after fit; tree stores only CPU Node objects.
         self._X_gpu = None
@@ -165,25 +171,51 @@ class EmlSplitTreeRegressor:
     def _grow(
         self, indices: np.ndarray, y_sub: np.ndarray, depth: int, rng: np.random.Generator
     ) -> Node:
-        if depth >= self.max_depth or len(y_sub) <= 2 * self.min_samples_leaf:
-            return self._fit_leaf(indices, y_sub)
+        # CPU pipeline: EML leaves require GPU, so all leaves are constant.
+        def _const_leaf(y):
+            return LeafNode(value=float(y.mean()) if len(y) > 0 else 0.0)
 
-        if self._X_gpu is not None:
-            best = self._find_best_split_gpu(indices, y_sub, rng)
-        else:
-            X_node = self._X_cpu[indices]
-            best = self._find_best_split_cpu(X_node, y_sub, rng)
+        if depth >= self.max_depth or len(y_sub) <= 2 * self.min_samples_leaf:
+            return _const_leaf(y_sub)
+
+        X_node = self._X_cpu[indices]
+        best = self._find_best_split_cpu(X_node, y_sub, rng)
         if best is None:
-            return self._fit_leaf(indices, y_sub)
+            return _const_leaf(y_sub)
 
         split, _gain, left_mask = best
         if left_mask.sum() < self.min_samples_leaf or (~left_mask).sum() < self.min_samples_leaf:
-            return self._fit_leaf(indices, y_sub)
+            return _const_leaf(y_sub)
 
         return InternalNode(
             split=split,
             left=self._grow(indices[left_mask], y_sub[left_mask], depth + 1, rng),
             right=self._grow(indices[~left_mask], y_sub[~left_mask], depth + 1, rng),
+        )
+
+    def _grow_gpu(
+        self, indices: "torch.Tensor", depth: int, rng: np.random.Generator,
+    ) -> Node:
+        """GPU-native version of `_grow`. `indices` is a long tensor on
+        `self._device`; recursion stays on GPU end-to-end."""
+        n = int(indices.shape[0])
+        if depth >= self.max_depth or n <= 2 * self.min_samples_leaf:
+            return self._fit_leaf(indices)
+
+        best = self._find_best_split_gpu(indices, rng)
+        if best is None:
+            return self._fit_leaf(indices)
+
+        split, _gain, left_mask = best  # left_mask is a GPU bool tensor
+        left_count = int(left_mask.sum().item())
+        right_count = n - left_count
+        if left_count < self.min_samples_leaf or right_count < self.min_samples_leaf:
+            return self._fit_leaf(indices)
+
+        return InternalNode(
+            split=split,
+            left=self._grow_gpu(indices[left_mask], depth + 1, rng),
+            right=self._grow_gpu(indices[~left_mask], depth + 1, rng),
         )
 
     def _find_best_split_cpu(
@@ -233,34 +265,30 @@ class EmlSplitTreeRegressor:
         return best_split, best_gain, best_mask
 
     def _find_best_split_gpu(
-        self, indices: np.ndarray, y_sub: np.ndarray, rng: np.random.Generator
-    ) -> tuple[RawSplit | EmlSplit, float, np.ndarray] | None:
-        """GPU-batched histogram split-finding.
-
-        Stacks raw features and sampled EML-transformed features into one
-        (n_node, d_total) tensor, then calls `gpu_histogram_split` which
-        argmaxes over all features × bin boundaries in a single torch pass.
-        """
+        self, indices: "torch.Tensor", rng: np.random.Generator
+    ) -> tuple[RawSplit | EmlSplit, float, "torch.Tensor"] | None:
+        """GPU-batched histogram split-finding. Indices and the returned
+        mask are both torch tensors on self._device — no CPU↔GPU
+        transfers per call."""
         device = self._device
-        assert device is not None and self._X_gpu is not None
-        idx_gpu = torch.from_numpy(indices).to(device=device, dtype=torch.long)
-        X_node = self._X_gpu[idx_gpu]                                # (n, n_raw)
-        y_node = torch.tensor(y_sub, dtype=torch.float32, device=device)
+        assert device is not None and self._X_gpu is not None and self._y_gpu is not None
+        X_node = self._X_gpu[indices]                          # (n, n_raw)
+        y_node = self._y_gpu[indices]                          # (n,)
 
         n_raw = X_node.shape[1]
         feat_cols: list[torch.Tensor] = [X_node]
         valid_candidates: np.ndarray | None = None
-        top_features: np.ndarray | None = None
+        top_features_gpu: "torch.Tensor" | None = None
         k_used = 0
 
         if self.n_eml_candidates > 0 and n_raw > 0:
             k_used = min(self.k_eml, n_raw)
-            top_features = self._top_features_by_corr(self._X_cpu[indices], y_sub, k_used)
+            top_features_gpu = self._top_features_by_corr_gpu(X_node, y_node, k_used)
             candidates = self._sample_descriptors(k_used, self.n_eml_candidates, rng)
             if len(candidates) > 0:
-                X_sub = X_node[:, top_features]
+                X_sub = X_node[:, top_features_gpu]
                 desc_gpu = torch.tensor(candidates, dtype=torch.int32, device=device)
-                eml_values = evaluate_trees_triton(desc_gpu, X_sub, k_used)  # (n_cand, n)
+                eml_values = evaluate_trees_triton(desc_gpu, X_sub, k_used)
                 finite = torch.isfinite(eml_values).all(dim=1)
                 if finite.any():
                     valid_candidates = candidates[finite.cpu().numpy()]
@@ -279,26 +307,28 @@ class EmlSplitTreeRegressor:
             return None
 
         if best_idx < n_raw:
-            split: RawSplit | EmlSplit = RawSplit(feature_idx=int(best_idx), threshold=float(best_t))
-            left_mask_gpu = all_feats[:, best_idx] <= best_t
+            split: RawSplit | EmlSplit = RawSplit(
+                feature_idx=int(best_idx), threshold=float(best_t),
+            )
         else:
             c_idx = int(best_idx) - n_raw
             assert valid_candidates is not None
-            assert top_features is not None
+            assert top_features_gpu is not None
             desc = valid_candidates[c_idx]
+            top_features_np = top_features_gpu.cpu().numpy()
             split = EmlSplit(
                 snapped=SnappedTree(
                     depth=2, k=k_used,
                     internal_input_count=2, leaf_input_count=4,
                     terminal_choices=tuple(int(v) for v in desc),
                 ),
-                feature_subset=tuple(int(v) for v in top_features),
+                feature_subset=tuple(int(v) for v in top_features_np),
                 threshold=float(best_t),
             )
-            left_mask_gpu = all_feats[:, best_idx] <= best_t
 
-        left_mask = left_mask_gpu.cpu().numpy()
-        return split, best_gain, left_mask
+        # Stay on GPU: return mask as a bool tensor, not numpy.
+        left_mask = all_feats[:, best_idx] <= best_t
+        return split, float(best_gain), left_mask
 
     @staticmethod
     def _best_threshold(values: np.ndarray, y: np.ndarray) -> tuple[float, float]:
@@ -343,7 +373,7 @@ class EmlSplitTreeRegressor:
         threshold = 0.5 * (v[best_i] + v[best_i + 1])
         return float(threshold), float(gain[best_i])
 
-    def _fit_leaf(self, indices: np.ndarray, y_sub: np.ndarray) -> Node:
+    def _fit_leaf(self, indices: "torch.Tensor") -> Node:
         """Build a leaf node. Tries an EML expression leaf if enabled and the
         sample count is large enough; falls back to a constant leaf otherwise.
 
@@ -355,8 +385,11 @@ class EmlSplitTreeRegressor:
             α selected in closed form per candidate tree; tree chosen by
             α-optimized val-SSE.
         """
-        n = len(y_sub)
-        constant_value = float(y_sub.mean()) if n > 0 else 0.0
+        n = int(indices.shape[0])
+        if n == 0:
+            return LeafNode(value=0.0)
+        y_sub = self._y_gpu[indices]
+        constant_value = float(y_sub.mean().item())
 
         # Early-out gates.
         eml_disabled = self.k_leaf_eml <= 0
@@ -370,10 +403,12 @@ class EmlSplitTreeRegressor:
         assert device is not None and self._X_gpu is not None
 
         k = min(self.k_leaf_eml, n_raw)
-        top_features = self._top_features_by_corr(self._X_cpu[indices], y_sub, k)
-        idx_gpu = torch.from_numpy(indices).to(device=device, dtype=torch.long)
-        X_sub_raw = self._X_gpu[idx_gpu][:, top_features]
-        y_full = torch.tensor(y_sub, dtype=torch.float32, device=device)
+        # X_sub_raw: gather X_gpu by leaf indices, then by top-k features.
+        X_node = self._X_gpu[indices]
+        top_features_gpu = self._top_features_by_corr_gpu(X_node, y_sub, k)
+        top_features = top_features_gpu.cpu().numpy()
+        X_sub_raw = X_node[:, top_features_gpu]
+        y_full = y_sub  # already a GPU float32 tensor
 
         # Standardize using GLOBAL (fit-time) mean/std — local leaf stats
         # produce narrow ranges that explode at predict time on same-leaf
@@ -393,7 +428,7 @@ class EmlSplitTreeRegressor:
         # out from the per-tree OLS fit so the tree-selection policy
         # (either the legacy gate or the Task 2 blend) can evaluate
         # generalization rather than training fit.
-        seed = int(indices[0]) if len(indices) else 0
+        seed = int(indices[0].item()) if n > 0 else 0
         rng_leaf = np.random.default_rng(seed)
         perm = rng_leaf.permutation(n)
         val_sz = max(n // 4, 5)
