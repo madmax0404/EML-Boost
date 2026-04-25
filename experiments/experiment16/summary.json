@@ -1,0 +1,210 @@
+{
+  "config": {
+    "leaf_l2": 1.0,
+    "max_rounds": 200,
+    "max_depth": 8,
+    "patience": 15,
+    "learning_rate": 0.1,
+    "n_eml_candidates": 10,
+    "k_eml": 3,
+    "k_leaf_eml": 1,
+    "min_samples_leaf": 20,
+    "min_samples_leaf_eml": 30,
+    "leaf_eml_gain_threshold": 0.05,
+    "leaf_eml_ridge": 0.0,
+    "leaf_eml_cap_k": 2.0,
+    "n_bins": 256,
+    "test_size": 0.2,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "comparison": [
+    {
+      "dataset": "527_analcatdata_election2000",
+      "exp15_ratio": 2.3551019682367422,
+      "exp16_ratio": 2.3641386251417282,
+      "delta": 0.009036656904986007,
+      "verdict": "still_catastrophic",
+      "new_rmse_mean": 57062.54707968346,
+      "exp15_xgb_mean": 24136.71790344469
+    },
+    {
+      "dataset": "663_rabe_266",
+      "exp15_ratio": 2.3407688343761017,
+      "exp16_ratio": 2.3664992091132695,
+      "delta": 0.02573037473716777,
+      "verdict": "still_catastrophic",
+      "new_rmse_mean": 9.272013826524347,
+      "exp15_xgb_mean": 3.9180295479577123
+    },
+    {
+      "dataset": "561_cpu",
+      "exp15_ratio": 2.148921828815294,
+      "exp16_ratio": 2.1857728365533333,
+      "delta": 0.03685100773803951,
+      "verdict": "still_catastrophic",
+      "new_rmse_mean": 63.04978352384182,
+      "exp15_xgb_mean": 28.845533474220844
+    },
+    {
+      "dataset": "659_sleuth_ex1714",
+      "exp15_ratio": 1.7422694886319043,
+      "exp16_ratio": 1.7419160760186825,
+      "delta": -0.00035341261322185957,
+      "verdict": "still_clear_loss",
+      "new_rmse_mean": 2762.341571230398,
+      "exp15_xgb_mean": 1585.8063481129336
+    },
+    {
+      "dataset": "1089_USCrime",
+      "exp15_ratio": 1.608037232433918,
+      "exp16_ratio": 1.6081056026952294,
+      "delta": 6.837026131134571e-05,
+      "verdict": "still_clear_loss",
+      "new_rmse_mean": 36.92934963666683,
+      "exp15_xgb_mean": 22.964505300380907
+    },
+    {
+      "dataset": "485_analcatdata_vehicle",
+      "exp15_ratio": 1.4838783283075394,
+      "exp16_ratio": 1.4837700112742997,
+      "delta": -0.00010831703323965769,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 282.19615581769165,
+      "exp15_xgb_mean": 190.18860987447397
+    },
+    {
+      "dataset": "230_machine_cpu",
+      "exp15_ratio": 1.4785632635144184,
+      "exp16_ratio": 1.4263224934519965,
+      "delta": -0.05224077006242189,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 56.34148436066526,
+      "exp15_xgb_mean": 39.50122403546142
+    },
+    {
+      "dataset": "505_tecator",
+      "exp15_ratio": 1.36457406119994,
+      "exp16_ratio": 1.4699978739564006,
+      "delta": 0.10542381275646062,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 1.9765101492120027,
+      "exp15_xgb_mean": 1.3445666719859657
+    },
+    {
+      "dataset": "1096_FacultySalaries",
+      "exp15_ratio": 1.2529295081133758,
+      "exp16_ratio": 1.3165920900093662,
+      "delta": 0.06366258189599039,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 1.988734112070358,
+      "exp15_xgb_mean": 1.5105165276028738
+    },
+    {
+      "dataset": "542_pollution",
+      "exp15_ratio": 1.1456910458878815,
+      "exp16_ratio": 1.1414019433654907,
+      "delta": -0.004289102522390786,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 50.08259534596714,
+      "exp15_xgb_mean": 43.87814094506942
+    },
+    {
+      "dataset": "666_rmftsa_ladata",
+      "exp15_ratio": 1.139665536431684,
+      "exp16_ratio": 1.1413754896263286,
+      "delta": 0.001709953194644731,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 2.277274407449788,
+      "exp15_xgb_mean": 1.9952017790353442
+    },
+    {
+      "dataset": "228_elusage",
+      "exp15_ratio": 1.1393989195299679,
+      "exp16_ratio": 1.158235917255012,
+      "delta": 0.018836997725044213,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 13.745519961857752,
+      "exp15_xgb_mean": 11.867634008824615
+    },
+    {
+      "dataset": "656_fri_c1_100_5",
+      "exp15_ratio": 1.111739243539351,
+      "exp16_ratio": 1.11596004651907,
+      "delta": 0.004220802979719052,
+      "verdict": "improved_but_still_loss",
+      "new_rmse_mean": 0.5894887832313962,
+      "exp15_xgb_mean": 0.5282346667070601
+    },
+    {
+      "dataset": "687_sleuth_ex1605",
+      "exp15_ratio": 1.0942902697714634,
+      "exp16_ratio": 1.044858047826368,
+      "delta": -0.049432221945095334,
+      "verdict": "in_band",
+      "new_rmse_mean": 12.431215513996072,
+      "exp15_xgb_mean": 11.89751616485789
+    },
+    {
+      "dataset": "591_fri_c1_100_10",
+      "exp15_ratio": 1.0900054207887035,
+      "exp16_ratio": 1.0934667146103898,
+      "delta": 0.003461293821686251,
+      "verdict": "in_band",
+      "new_rmse_mean": 0.5893819559437266,
+      "exp15_xgb_mean": 0.5390031064216964
+    },
+    {
+      "dataset": "594_fri_c2_100_5",
+      "exp15_ratio": 1.066209566078846,
+      "exp16_ratio": 1.0447336226975479,
+      "delta": -0.0214759433812981,
+      "verdict": "in_band",
+      "new_rmse_mean": 0.5543836787158478,
+      "exp15_xgb_mean": 0.5306459624458194
+    },
+    {
+      "dataset": "201_pol",
+      "exp15_ratio": 1.0253097146948824,
+      "exp16_ratio": 1.0203506231234492,
+      "delta": -0.004959091571433261,
+      "verdict": "in_band",
+      "new_rmse_mean": 4.560365518443522,
+      "exp15_xgb_mean": 4.469410235163621
+    },
+    {
+      "dataset": "537_houses",
+      "exp15_ratio": 1.0091352315119597,
+      "exp16_ratio": 1.002480880279517,
+      "delta": -0.0066543512324426235,
+      "verdict": "in_band",
+      "new_rmse_mean": 46091.93099356059,
+      "exp15_xgb_mean": 45977.865413960804
+    },
+    {
+      "dataset": "657_fri_c2_250_10",
+      "exp15_ratio": 1.0062170507944903,
+      "exp16_ratio": 0.9944703438231108,
+      "delta": -0.011746706971379473,
+      "verdict": "now_a_win",
+      "new_rmse_mean": 0.37975366993231835,
+      "exp15_xgb_mean": 0.38186525349001876
+    },
+    {
+      "dataset": "1030_ERA",
+      "exp15_ratio": 1.0023378558208202,
+      "exp16_ratio": 1.0030953395917053,
+      "delta": 0.0007574837708850257,
+      "verdict": "in_band",
+      "new_rmse_mean": 1.576848033709573,
+      "exp15_xgb_mean": 1.5719822149222675
+    }
+  ],
+  "n_datasets_attempted": 20,
+  "n_datasets_with_data": 20
+}
