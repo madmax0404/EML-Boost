@@ -127,6 +127,7 @@ class EmlSplitTreeRegressor:
         if self.use_gpu and torch.cuda.is_available():
             self._device = torch.device("cuda")
             self._X_gpu = torch.tensor(X, dtype=torch.float32, device=self._device)
+            self._y_gpu = torch.tensor(y, dtype=torch.float32, device=self._device)
             self._global_mean_gpu = torch.tensor(
                 self._global_mean, dtype=torch.float32, device=self._device,
             )
@@ -136,6 +137,7 @@ class EmlSplitTreeRegressor:
         else:
             self._device = None
             self._X_gpu = None
+            self._y_gpu = None
             self._global_mean_gpu = None
             self._global_std_gpu = None
 
@@ -144,6 +146,7 @@ class EmlSplitTreeRegressor:
 
         # Release GPU handles after fit; tree stores only CPU Node objects.
         self._X_gpu = None
+        self._y_gpu = None
         self._global_mean_gpu = None
         self._global_std_gpu = None
         self._device = None
@@ -732,6 +735,26 @@ class EmlSplitTreeRegressor:
         denom = col_std * (y.std() + 1e-12) * len(y) + 1e-12
         corrs = (X - X.mean(axis=0)).T @ y_centered / denom
         return np.argsort(-np.abs(corrs))[:k]
+
+    @staticmethod
+    def _top_features_by_corr_gpu(
+        X: "torch.Tensor", y: "torch.Tensor", k: int
+    ) -> "torch.Tensor":
+        """GPU-native version of `_top_features_by_corr`.
+
+        Returns a long tensor on the same device as X with the indices
+        of the top-k features by absolute Pearson correlation with y.
+        """
+        n = X.shape[0]
+        if n == 0 or k == 0:
+            return torch.empty(0, dtype=torch.long, device=X.device)
+        X_centered = X - X.mean(dim=0, keepdim=True)
+        y_centered = y - y.mean()
+        num = (X_centered * y_centered.unsqueeze(1)).sum(dim=0)
+        denom = X_centered.norm(dim=0) * y_centered.norm() + 1e-12
+        corr = (num / denom).abs()
+        k_clipped = min(k, X.shape[1])
+        return torch.topk(corr, k_clipped, sorted=False).indices.to(torch.long)
 
     def _sample_descriptors(
         self, k: int, n_samples: int, rng: np.random.Generator

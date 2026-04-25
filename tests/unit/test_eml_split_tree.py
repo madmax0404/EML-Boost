@@ -571,3 +571,23 @@ def test_cap_adapts_across_boosting_rounds():
         f"cap did not shrink: first-round max {max(first_caps):.3g}, "
         f"last-round max {max(last_caps):.3g}"
     )
+
+
+def test_top_features_by_corr_gpu_matches_numpy():
+    """The GPU correlation helper must return the same top-k feature
+    indices as the existing numpy version for the same input."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("GPU correlation requires CUDA")
+    rng = np.random.default_rng(42)
+    X = rng.normal(size=(500, 8))
+    y = X[:, 2] * 2.0 + X[:, 5] * 1.5 + 0.3 * rng.normal(size=500)
+
+    np_top = EmlSplitTreeRegressor._top_features_by_corr(X, y, k=3)
+
+    device = torch.device("cuda")
+    X_gpu = torch.tensor(X, dtype=torch.float32, device=device)
+    y_gpu = torch.tensor(y, dtype=torch.float32, device=device)
+    gpu_top = EmlSplitTreeRegressor._top_features_by_corr_gpu(X_gpu, y_gpu, k=3)
+
+    assert sorted(np_top.tolist()) == sorted(gpu_top.cpu().tolist())
