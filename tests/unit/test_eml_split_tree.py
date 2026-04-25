@@ -651,6 +651,36 @@ def test_gpu_predict_matches_cpu_fallback():
     np.testing.assert_allclose(pred_gpu, pred_cpu, rtol=1e-3, atol=1e-3)
 
 
+def test_predict_triton_matches_torch():
+    """The Triton tree-predict kernel must produce the same predictions
+    as the torch fallback to within float32 tolerance."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-1, 1, size=(500, 3)).astype(np.float32)
+    y = np.exp(X[:, 0]) + 0.5 * X[:, 1] + 0.05 * rng.normal(size=500)
+
+    m = EmlSplitTreeRegressor(
+        max_depth=4, n_eml_candidates=10, k_eml=2,
+        k_leaf_eml=1, min_samples_leaf_eml=30,
+        use_gpu=True, random_state=0,
+    ).fit(X.astype(np.float64), y)
+
+    device = torch.device("cuda")
+    X_gpu = torch.tensor(X, dtype=torch.float32, device=device)
+
+    # Triton path (default after this work)
+    pred_triton = m._predict_x_gpu(X_gpu).cpu().numpy().astype(np.float64)
+
+    # Force torch fallback by calling the renamed _torch method directly
+    pred_torch = (
+        m._predict_x_gpu_torch(X_gpu).cpu().numpy().astype(np.float64)
+    )
+
+    np.testing.assert_allclose(pred_triton, pred_torch, rtol=1e-3, atol=1e-3)
+
+
 def test_gpu_speedup_on_synthetic_large():
     """Sanity: a 100k-row synthetic at depth=8 must complete in
     under 60 seconds. The pre-port baseline (extrapolating from

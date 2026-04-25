@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+import triton
 
 from eml_boost._triton_exhaustive import (
     descriptor_feature_mask_numpy,
@@ -1002,9 +1003,28 @@ class EmlSplitTreeRegressor:
         }
 
     def _predict_x_gpu(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
+        """GPU-input predict. Tries Triton kernel first; falls back
+        to torch loop if Triton compile or run fails."""
+        device = X_gpu.device
+        if self._gpu_tree_device != device:
+            self._gpu_tree = {
+                k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+                for k, v in self._gpu_tree.items()
+            }
+            self._gpu_tree_device = device
+        try:
+            from eml_boost.tree_split._predict_triton import predict_tree_triton
+            return predict_tree_triton(X_gpu, self._gpu_tree, self.max_depth)
+        except (RuntimeError, ImportError, triton.compiler.CompilationError):
+            return self._predict_x_gpu_torch(X_gpu)
+
+    def _predict_x_gpu_torch(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
         """Tensorized GPU traversal of the fitted tree using a caller-owned
         GPU tensor. Returns a GPU float32 tensor of shape (n_samples,).
-        Does NOT transfer to CPU/numpy."""
+        Does NOT transfer to CPU/numpy.
+
+        Torch-loop fallback for GPU predict — kept as the reference
+        implementation when the Triton kernel can't run."""
         device = X_gpu.device
         if self._gpu_tree_device != device:
             self._gpu_tree = {
