@@ -87,6 +87,7 @@ class EmlSplitTreeRegressor:
         leaf_eml_gain_threshold: float = 0.05,
         leaf_eml_ridge: float = 0.0,
         leaf_eml_cap_k: float = 2.0,
+        leaf_l2: float = 0.0,                   # NEW; default 0.0 for safety; flipped to 1.0 in Task 7
         use_stacked_blend: bool = False,
         random_state: int | None = None,
     ):
@@ -110,6 +111,9 @@ class EmlSplitTreeRegressor:
         self.leaf_eml_gain_threshold = leaf_eml_gain_threshold
         self.leaf_eml_ridge = leaf_eml_ridge
         self.leaf_eml_cap_k = leaf_eml_cap_k
+        if leaf_l2 < 0.0:
+            raise ValueError(f"leaf_l2 must be >= 0, got {leaf_l2}")
+        self.leaf_l2 = float(leaf_l2)
         self.use_stacked_blend = use_stacked_blend
         self.random_state = random_state
         self._gpu_tree = None
@@ -229,7 +233,9 @@ class EmlSplitTreeRegressor:
     ) -> Node:
         # CPU pipeline: EML leaves require GPU, so all leaves are constant.
         def _const_leaf(y):
-            return LeafNode(value=float(y.mean()) if len(y) > 0 else 0.0)
+            return LeafNode(
+                value=float(y.sum() / (len(y) + self.leaf_l2)) if len(y) > 0 else 0.0
+            )
 
         if depth >= self.max_depth or len(y_sub) <= 2 * self.min_samples_leaf:
             return _const_leaf(y_sub)
@@ -454,7 +460,7 @@ class EmlSplitTreeRegressor:
         no_gpu = self._X_gpu is None or self._device is None
         n_raw = self._X_cpu.shape[1] if self._X_cpu is not None else 0
         if eml_disabled or too_small or no_gpu or n_raw == 0:
-            return LeafNode(value=float(y_sub.mean().item()))
+            return LeafNode(value=float((y_sub.sum() / (n + self.leaf_l2)).item()))
 
         device = self._device
         assert device is not None and self._X_gpu is not None
@@ -473,7 +479,7 @@ class EmlSplitTreeRegressor:
         cap_k = float(self.leaf_eml_cap_k)
         if cap_k > 0.0:
             scalars_gpu = torch.stack([
-                y_sub.mean(),
+                y_sub.sum() / (n + self.leaf_l2),         # CHANGED from y_sub.mean()
                 indices[0].to(torch.float32),
                 y_sub.abs().max() * cap_k,
             ])
@@ -483,7 +489,7 @@ class EmlSplitTreeRegressor:
             cap_leaf = float(scalars[2])
         else:
             scalars_gpu = torch.stack([
-                y_sub.mean(),
+                y_sub.sum() / (n + self.leaf_l2),         # CHANGED from y_sub.mean()
                 indices[0].to(torch.float32),
             ])
             scalars = scalars_gpu.cpu().numpy()

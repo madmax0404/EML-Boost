@@ -77,6 +77,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         leaf_eml_gain_threshold: float = 0.05,
         leaf_eml_ridge: float = 0.0,
         leaf_eml_cap_k: float = 2.0,
+        leaf_l2: float = 0.0,                   # NEW; mirrors EmlSplitTreeRegressor
         use_stacked_blend: bool = False,
         patience: int | None = 15,
         val_fraction: float = 0.15,
@@ -97,6 +98,9 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         self.leaf_eml_gain_threshold = leaf_eml_gain_threshold
         self.leaf_eml_ridge = leaf_eml_ridge
         self.leaf_eml_cap_k = leaf_eml_cap_k
+        if leaf_l2 < 0.0:
+            raise ValueError(f"leaf_l2 must be >= 0, got {leaf_l2}")
+        self.leaf_l2 = float(leaf_l2)
         self.use_stacked_blend = use_stacked_blend
         self.patience = patience
         self.val_fraction = val_fraction
@@ -163,6 +167,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
                 leaf_eml_gain_threshold=self.leaf_eml_gain_threshold,
                 leaf_eml_ridge=self.leaf_eml_ridge,
                 leaf_eml_cap_k=self.leaf_eml_cap_k,
+                leaf_l2=self.leaf_l2,
                 use_stacked_blend=self.use_stacked_blend,
                 random_state=tree_seeds[m],
             ).fit(X_tr, r)
@@ -236,6 +241,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
                 leaf_eml_gain_threshold=self.leaf_eml_gain_threshold,
                 leaf_eml_ridge=self.leaf_eml_ridge,
                 leaf_eml_cap_k=self.leaf_eml_cap_k,
+                leaf_l2=self.leaf_l2,
                 use_stacked_blend=self.use_stacked_blend,
                 random_state=tree_seeds[m],
             )._fit_xy_gpu(X_tr_gpu, r_gpu)

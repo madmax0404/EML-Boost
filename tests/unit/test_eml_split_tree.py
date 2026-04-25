@@ -843,7 +843,7 @@ def test_leaf_l2_zero_constant_leaves_bit_exact():
         n_bins=256,
         histogram_min_n=500,       # n=600 > 500 → exercises _best_threshold_histogram
         use_gpu=False,             # CPU is deterministic
-        # leaf_l2=0.0,  # TODO: uncomment after Task 2 adds the leaf_l2 parameter
+        leaf_l2=0.0,
         random_state=0,
     ).fit(X, y)
     pred = m.predict(X[:50])
