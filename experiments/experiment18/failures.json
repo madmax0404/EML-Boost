@@ -1,0 +1,10 @@
+[
+  {
+    "dataset": "red_wine",
+    "seed": "ALL_SEEDS",
+    "config": "data_fetch",
+    "error_type": "IndexError",
+    "error_message": "too many indices for array: array is 0-dimensional, but 1 were indexed",
+    "error_phase": "fetch"
+  }
+]
