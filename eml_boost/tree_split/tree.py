@@ -75,7 +75,7 @@ class EmlSplitTreeRegressor:
         self,
         *,
         max_depth: int = 8,
-        min_samples_leaf: int = 20,
+        min_samples_leaf: int = 1,                # was 20; flipped post-Exp-17 to match the matched-comparison setting
         n_eml_candidates: int = 10,
         k_eml: int = 3,
         eml_depth: int = 2,
