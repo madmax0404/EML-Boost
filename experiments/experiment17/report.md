@@ -324,10 +324,30 @@ similar overfit patterns. The round count nearly doubles (42 → 79) when EML ca
 are present, suggesting they keep adding "useful" splits that don't generalize. Disabling
 them (`n_eml_candidates=0`) returns SB to parity with XGB.
 
-A targeted intervention — disable EML internal-split candidates when the dataset has
-fewer than (e.g.) 3 features — would close the only real loss in Exp 17 without
-disturbing the EML mechanism on the 117 datasets where it helps. **Out of scope for
-this Exp-17 update; tracked as a follow-up.**
+A targeted intervention — disable or reduce EML internal-split candidates when the
+dataset has fewer than (e.g.) 3 features — was investigated as a follow-up. **It does
+not generalize.** A 20-seed paired sweep on the 3 PMLB k=2 datasets (`banana`,
+`663_rabe_266`, `228_elusage`) shows the optimal `n_eml_candidates` for each dataset
+is opposite-direction:
+
+| dataset | k | best cand | best paired ratio | sweep direction |
+|---|---|---|---|---|
+| `banana` (n=5300) | 2 | **1** | 1.002 | low cand wins; default 10 → 1.091 |
+| `663_rabe_266` (n=120) | 2 | **10** (default) | 0.781 | high cand wins; cand=1 → 0.952 |
+| `228_elusage` (n=55) | 2 | **10** (default) | 0.973 | high cand wins; cand=1 → 1.000 |
+
+A heuristic like `n_eml_candidates = min(default, k - 1)` would gain ~0.07 on banana
+(1.074 → 1.002) but **lose ~0.22 on rabe_266** (0.781 → 0.952) — a net regression on
+the k=2 cluster. The EML overfit on banana isn't really a "low feature count" problem;
+it's a property of banana's specific decision boundary (curved, sin/cos-like) where
+EML candidates can fit local features too eagerly. Other k=2 datasets (`rabe_266` is
+real-world economic data) genuinely benefit from candidate diversity.
+
+**Verdict: `banana` is a documented structural weakness, not a fixable regime.** Any
+data-structure-aware adaptive scheme would require multi-day work for marginal ROI on
+a single dataset. Recommended: leave the default at `n_eml_candidates=10`, document
+banana as a known weakness, and re-evaluate against OpenML's curated suites in Exp 18
+where banana isn't part of the dataset universe.
 
 ### Underpowered-comparison correction
 
@@ -386,12 +406,14 @@ at 90%+ wins vs matched-XGB rather than the current 78%.
   k_eml probe on `651_fri_c0_100_25` and `505_tecator` showed the intervention is
   strongly dataset-specific, not a clean adaptive formula. Lower priority than originally
   framed.)**
-- **Address `banana` (the one real loss).** A targeted intervention — disable EML
-  internal-split candidates (`n_eml_candidates=0`) when the dataset has fewer than ~3
-  features — would close the only structural loss in Exp 17. The 4-condition isolation
-  experiment in `profile_loss_regime/` shows this fix returns SB to parity with XGB on
-  `banana` (ratio 1.129 → 1.001) without disturbing performance on the 117 other
-  datasets where EML candidates help. Cheap and well-targeted; spec to be drafted if
+- **~~Address `banana` (the one real loss)~~** — investigated, deferred. The targeted
+  fix (`n_eml_candidates = min(default, k - 1)`) closes banana but **regresses
+  `663_rabe_266` from ratio 0.781 → 0.952 (a 0.22 win shrink)**. The two k=2 datasets
+  want opposite cand values (banana benefits from low cand, rabe_266 from high cand),
+  so a low-k heuristic doesn't generalize. See the post-hoc section for details. Banana
+  is documented as a known structural weakness; will re-evaluate in Exp 18 (OpenML)
+  where banana isn't part of the dataset universe. The remainder of this bullet is
+  preserved for context but the recommendation is no longer "spec to be drafted":
   the 100% loss-elimination goal is pursued.
 - **Exp-17b: 20-seed full re-run** (~9 hours overnight). Produces the methodologically
   defensible headline numbers with paired sign-test verdicts per dataset. The
