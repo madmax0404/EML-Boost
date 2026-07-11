@@ -246,14 +246,24 @@ def fit_leaves_batched(tree, pending) -> list[Node]:
         thr = float(tree.leaf_eml_gain_threshold)
         accept = valid_b & (best_sse < const_sse * (1.0 - thr))
 
-        best_idx_np = best_idx.cpu().numpy()
-        accept_np = accept.cpu().numpy()
-        eta_np = eta_b.cpu().numpy()
-        bias_np = bias_b.cpu().numpy()
-        cap_np = cap.cpu().numpy()
-        feats_np = top_feats.cpu().numpy()
-        mean_np = mean_x.cpu().numpy()
-        std_np = std_x.cpu().numpy()
+        # Consolidate the eight adjacent D2H readbacks into three transfers,
+        # grouped by shape/dtype. .cpu() is a pure copy (no compute), so every
+        # extracted value is bit-identical to the per-tensor version; this only
+        # collapses eight device->host launches into three.
+        flt_e = torch.stack([eta_b, bias_b, cap]).cpu().numpy()  # (3, E)
+        flt_ek = torch.stack([mean_x, std_x]).cpu().numpy()  # (2, E, k)
+        lng = (
+            torch.cat(
+                [best_idx.unsqueeze(1), accept.long().unsqueeze(1), top_feats], dim=1
+            )
+            .cpu()
+            .numpy()
+        )  # (E, k+2)
+        eta_np, bias_np, cap_np = flt_e[0], flt_e[1], flt_e[2]
+        mean_np, std_np = flt_ek[0], flt_ek[1]
+        best_idx_np = lng[:, 0]
+        accept_np = lng[:, 1].astype(bool)
+        feats_np = lng[:, 2:]
 
         desc_np = get_descriptor_np(2, k)
         for slot, i in enumerate(e_ids):
