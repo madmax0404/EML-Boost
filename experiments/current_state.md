@@ -1,131 +1,53 @@
-# Current state — 2026-04-25 (post-redux, pre-Experiment-15-restart)
+# Current state — 2026-07-12 (post-Experiment-19, levelwise engine is the default)
 
-## What we're working on
+## What just happened
 
-**Experiment 15** — full PMLB regression suite (122 datasets × 5 seeds ×
-3 models = 1,830 fits) comparing SplitBoost (Exp-13 defaults) against
-matched-capacity XGBoost and LightGBM. Runner:
-`experiments/run_experiment15_full_pmlb.py`.
+The level-wise growth engine effort (spec
+`docs/superpowers/specs/2026-07-11-levelwise-growth-design.md`, plan + 2 amendments in
+`docs/superpowers/plans/2026-07-11-levelwise-growth.md`) is complete: 31 commits,
+`f98c541..171281d`, all task-reviewed, final whole-branch review passed with its fix
+wave landed.
 
-## Progress so far
-
-- **6 datasets / 90 rows already complete** in
-  `experiments/experiment15/summary.csv` (preserved across the whole
-  redux work). Header + 90 data rows = 91 lines.
-- **Run was paused** because the original GPU port left fit time at
-  ~155s on the worst-case `1191_BNG_pbc` (1M rows × 18 features),
-  projecting 5-15 hours total — too long to run unattended.
-- **The redux GPU port** (X-cache + Triton predict + Triton histogram)
-  delivered correct kernels but only modest end-to-end gains because
-  predict and histogram-split weren't the dominant bottleneck.
-- **Profile-driven follow-up** identified `enumerate_depth2_descriptor`
-  taking 46% of fit time due to a missed cache. One-line fix +
-  `.item()` batching in `_select_leaf_gated` brought 1191_BNG_pbc fit
-  time to **~74s**. With the 6 datasets-already-done as a sample, full
-  Experiment 15 should finish in 2-3 hours.
-
-## Performance progression on `1191_BNG_pbc` (200 rounds, depth=8)
-
-| Stage                                          | Time | Notes |
-|------------------------------------------------|------|-------|
-| Pre-port (CPU-bound)                           | 690s | The original baseline |
-| Original GPU port (commits c238977..eb24a0c)   | 180s | Per-node H2D eliminated, tensorized predict |
-| Post T1 — X-cache across boost loop            | 156s | `_fit_xy_gpu`, `_predict_x_gpu` |
-| Post T2 — Triton predict kernel                | 153s | 239× per-call but predict was small share |
-| Post T3 — Triton histogram-split kernel        | 143s | 2.5× per-call, ~7% e2e |
-| **Post descriptor-cache + .item() batching**   | **74s** | The big win |
-| **Total speedup vs pre-port**                  | **9.3×** ||
+- **`tree_growth="levelwise"` is the library default** (both regressors). The old
+  recursive engine remains as `tree_growth="nodewise"` — the reference/oracle, GPU-only
+  distinction unchanged (CPU fallback ignores the flag).
+- **Exp 19** (`experiments/experiment19/report.md`) is the validation record:
+  RMSE parity vs Exp-18 passed every gate (win rate 73.5%, median ratio 0.987,
+  0 catastrophic, 0/34 datasets beyond seed noise); CTR23 suite fit time 691s → 167s
+  (4.1×); SB/XGB suite ratio 59.6× → **14.17×** — the spec's ≤10× goal is **UNMET**
+  (documented, user-accepted): the level loop is CPU-dispatch-bound (~3000 tiny torch
+  ops/round; launch consolidation was wall-neutral).
+- **Same-seed determinism now holds** (a first): fixed-point integer histograms with
+  per-segment scale + int64 cumsum, shared by both engines; scoped deterministic
+  algorithms in the batched leaf finalize. The pre-existing engine was nondeterministic
+  (float-atomic hist), meaning Exp-15..18 per-seed values were never exactly
+  re-runnable; their aggregates stand.
 
 ## Tests
 
-- 94 unit tests pass.
-- 1 pre-existing unrelated failure:
-  `tests/unit/test_eml_weak_learner.py::test_fit_recovers_simple_formula`
-  (in `fit_eml_tree`, not in any of the changed modules). Leave alone.
-- Equivalence tests for both new Triton kernels
-  (`test_predict_triton_matches_torch`,
-  `test_histogram_split_triton_matches_torch`) verify Triton path
-  actually executes (no silent fallback) within float32 tolerance.
+- 138 passed / 1 pre-existing failure (`test_fit_recovers_simple_formula` — old
+  weak-learner module, red since April; standing instruction: leave alone).
+- Key gates in `tests/unit/test_levelwise.py`: bit-exact no-EML structural oracle
+  (levelwise ≡ nodewise), EML invariants, same-seed determinism (incl. adversarial
+  duplicated/correlated-feature fixture), 3× speed gate (measures ~6.3×).
 
-## Recent commits (most recent first)
+## Known follow-up queue (none blocking)
 
-```
-2e77881 chore: remove orphaned imports after descriptor cache fix
-c9e3264 fix: cache enumerate_depth2_descriptor + feature mask in
-        _sample_descriptors; batch D2H syncs in _select_leaf_gated
-421fec1 test: tighten GPU speedup threshold after Triton port
-e3ee5a6 fix: validate n_bins power-of-2 in Triton histogram-split +
-        rephrase comment
-27f8ea4 feat: Triton kernel for histogram-based best-split-finding
-a4df96d fix: broaden Triton predict fallback exception + warn-once on
-        first fallback
-c0b183a feat: Triton kernel for whole-tree GPU prediction
-529bb55 fix: use population std in _fit_xy_gpu for parity with numpy path
-c610c3a feat: cache X on GPU across the boost loop (X-cache optimization)
-f90646a plan: SplitBoost GPU port redux
-d3ea969 spec: SplitBoost GPU port redux
-```
-
-## Spec & plan
-
-- Spec: `docs/superpowers/specs/2026-04-25-splitboost-gpu-port-redux-design.md`
-- Plan: `docs/superpowers/plans/2026-04-25-splitboost-gpu-port-redux.md`
-- The descriptor-cache fix was profile-driven and not from the original
-  plan; covered post-hoc by `c9e3264`'s commit message.
-
-## Pending decision (this is where the user paused)
-
-User asked for a checkpoint before restarting Experiment 15. Three
-options were on the table:
-
-1. **Kick off Experiment 15 in the background now.** Resume-from-
-   checkpoint preserves the 6 datasets / 90 rows already done. Notify
-   when complete. Estimated ~2-3 hours.
-2. **Run a 5-seed sanity bench on 2-3 representative non-1191_BNG_pbc
-   datasets first** to confirm the speedup holds outside the worst-case
-   profile target. ~5 min, then start Experiment 15.
-3. **Hold off** and do something else first.
-
-Pick one when resuming; ping the assistant with the option number.
-
-## Active task IDs
-
-- #61: Redux T4 — validate combined speedup + restart Experiment 15
-  (in_progress; Steps 1-3 done, Step 4 paused on user decision)
-- #62: Redux Tx — descriptor cache fix + .item() batching (completed)
-- #58, #59, #60: Redux T1, T2, T3 (completed)
+1. **Dispatch-elimination phase** — the named path to ≤10×: CUDA-graph capture /
+   torch.compile of the level loop, or mega-kernel consolidation. Needs its own spec.
+2. **Fixed-point integer corr** (mirror `_multinode_hist`) if the determinism gate ever
+   flakes — the float `index_add_` corr top-k is the one theoretically-uncovered path
+   (empirically stable across 13+ runs; scoped-deterministic alternative measured at 2×
+   fit cost and rejected — see `171281d` commit body).
+3. Exp-18 report's inherited proposals: Optuna-tuned baselines (Exp 20?), Grinsztajn
+   suite cross-check, 20-seed `brazilian_houses` re-validation.
+4. `red_wine` OpenML fetch is deterministically broken (IndexError; Exp 18 + both Exp-19
+   runs) — consider reporting upstream or pinning a cached copy.
+5. Cross-version RMSE bit-stability does not hold (float near-tie reshuffles under code
+   changes) — same-seed determinism is per-version. Caveated in the Exp-19 report.
 
 ## How to resume after reboot
 
-1. `cd /home/max1024/Workspaces/company/new-gbdt-angle`
-2. Verify state: `git log --oneline -3` should show `2e77881` at HEAD.
-3. Quick sanity: `uv run pytest tests/unit/ -q` should report
-   `94 passed, 1 failed`.
-4. Read this file and `experiments/workflow.md`.
-5. Tell the assistant which option (1, 2, or 3) you want for restarting
-   Experiment 15.
-
-## Files touched in the redux
-
-```
-eml_boost/tree_split/_predict_triton.py     (NEW — Triton predict kernel)
-eml_boost/tree_split/_gpu_split_triton.py   (NEW — Triton histogram kernel)
-eml_boost/tree_split/tree.py                (X-cache, predict dispatcher,
-                                              descriptor-cache fix, batching)
-eml_boost/tree_split/ensemble.py            (boost-loop GPU residency)
-eml_boost/tree_split/_gpu_split.py          (rename + dispatcher)
-tests/unit/test_eml_split_tree.py           (3 new tests + threshold tighten)
-tests/unit/test_eml_split_boost.py          (1 new test)
-docs/superpowers/specs/2026-04-25-splitboost-gpu-port-redux-design.md
-docs/superpowers/plans/2026-04-25-splitboost-gpu-port-redux.md
-```
-
-The pre-existing baseline files are unchanged in behavior on the CPU
-path; all GPU changes preserve correctness within float32 tolerance.
-
-## Profile artifacts (not tracked in git)
-
-`profile_redux/` contains `cum.txt`, `tot.txt`, `profile.pstats`,
-`run_profile.py`, and `run.log` from the cProfile-instrumented 50-round
-fit on `1191_BNG_pbc` that drove the descriptor-cache fix. Useful as
-reference if a new bottleneck appears later.
+1. `git log --oneline -3` should show `171281d` at HEAD.
+2. `uv run pytest tests/unit/ -q` → 138 passed, 1 pre-existing failure.
+3. Execution ledger (task-by-task history + carried findings): `.superpowers/sdd/progress.md`.
