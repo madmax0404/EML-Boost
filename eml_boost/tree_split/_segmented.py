@@ -38,19 +38,30 @@ def segment_corr(
     device = X.device
     cnt = segment_counts(seg_id, n_segments).clamp(min=1.0)  # (S,)
 
-    sum_x = torch.zeros(n_segments, d, device=device).index_add_(0, seg_id, X)
-    mean_x = sum_x / cnt.unsqueeze(1)
-    sum_y = torch.zeros(n_segments, device=device).index_add_(0, seg_id, y)
-    mean_y = sum_y / cnt
+    # Pass 1: sum_x (S,d) and sum_y (S,) in ONE index_add over stacked lanes
+    # [0:d]=X, [d]=y. Each output lane accumulates the identical per-segment
+    # summands it would alone, into a disjoint column, so per-lane float
+    # results match the two-call version — one kernel launch instead of two.
+    p1 = torch.zeros(n_segments, d + 1, device=device).index_add_(
+        0, seg_id, torch.cat([X, y.unsqueeze(1)], dim=1)
+    )
+    mean_x = p1[:, :d] / cnt.unsqueeze(1)
+    mean_y = p1[:, d] / cnt
 
     xc = X - mean_x[seg_id]
     yc = y - mean_y[seg_id]
 
-    num = torch.zeros(n_segments, d, device=device).index_add_(
-        0, seg_id, xc * yc.unsqueeze(1)
+    # Pass 2: num (S,d), sq_x (S,d), sq_y (S,) in ONE index_add over stacked
+    # lanes [0:d]=xc*yc, [d:2d]=xc*xc, [2d]=yc*yc (same disjoint-lane argument;
+    # the two-pass centered math is unchanged).
+    p2 = torch.zeros(n_segments, 2 * d + 1, device=device).index_add_(
+        0,
+        seg_id,
+        torch.cat([xc * yc.unsqueeze(1), xc * xc, (yc * yc).unsqueeze(1)], dim=1),
     )
-    sq_x = torch.zeros(n_segments, d, device=device).index_add_(0, seg_id, xc * xc)
-    sq_y = torch.zeros(n_segments, device=device).index_add_(0, seg_id, yc * yc)
+    num = p2[:, :d]
+    sq_x = p2[:, d : 2 * d]
+    sq_y = p2[:, 2 * d]
 
     denom = sq_x.sqrt() * sq_y.sqrt().unsqueeze(1) + 1e-12
     return (num / denom).abs()
