@@ -17,9 +17,10 @@ The split-finding algorithm:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
-import triton
 
 from eml_boost._triton_exhaustive import (
     evaluate_trees_torch,
@@ -28,7 +29,6 @@ from eml_boost._triton_exhaustive import (
     get_descriptor_gpu,
     get_descriptor_np,
     get_feature_mask_gpu,
-    get_feature_mask_np,
     get_valid_descriptors_np,
 )
 from eml_boost.symbolic.snap import SnappedTree
@@ -41,6 +41,18 @@ from eml_boost.tree_split.nodes import (
     Node,
     RawSplit,
 )
+
+
+@dataclass
+class _PendingLeaf:
+    """Placeholder emitted during growth; resolved by _finalize_leaves.
+
+    Never escapes fit(): _finalize_leaves replaces every instance before
+    _tensorize_tree / predict can observe it.
+    """
+
+    indices: torch.Tensor  # GPU long tensor of the leaf's row indices
+    resolved: Node | None = None
 
 
 class EmlSplitTreeRegressor:
@@ -118,14 +130,21 @@ class EmlSplitTreeRegressor:
         self.random_state = random_state
         self._gpu_tree = None
         self._gpu_tree_device = None
+        # Stage-1 (levelwise plan): leaf fits are deferred to _finalize_leaves.
+        # False = per-leaf reference path (_fit_leaf); True = batched path
+        # (_leaf_batch.fit_leaves_batched, Task 3). Not a constructor param:
+        # tests toggle the instance attribute directly.
+        self._batched_leaves = False
+        self._pending_leaves: list[_PendingLeaf] = []
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "EmlSplitTreeRegressor":
+    def fit(self, X: np.ndarray, y: np.ndarray) -> EmlSplitTreeRegressor:
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
         rng = np.random.default_rng(self.random_state)
 
         self._X_cpu = X
         self._leaf_stats: list[dict] = []
+        self._pending_leaves = []
         # Global mean/std across the full training set, used to standardize
         # features inside EML leaves. Local (per-leaf) stats produce narrow
         # ranges that blow up at predict time when same-leaf test samples
@@ -154,6 +173,7 @@ class EmlSplitTreeRegressor:
                 len(X), dtype=torch.long, device=self._device,
             )
             self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+            self._root = self._finalize_leaves(self._root)
             self._gpu_tree = self._tensorize_tree(self._root)
         else:
             indices = np.arange(len(X))
@@ -169,8 +189,8 @@ class EmlSplitTreeRegressor:
         return self
 
     def _fit_xy_gpu(
-        self, X_gpu: "torch.Tensor", y_gpu: "torch.Tensor",
-    ) -> "EmlSplitTreeRegressor":
+        self, X_gpu: torch.Tensor, y_gpu: torch.Tensor,
+    ) -> EmlSplitTreeRegressor:
         """GPU-input variant of fit(). X_gpu and y_gpu are caller-owned
         tensors; this method borrows them during fit and clears its own
         references at end (does NOT free the caller's storage).
@@ -186,6 +206,7 @@ class EmlSplitTreeRegressor:
 
         rng = np.random.default_rng(self.random_state)
         self._leaf_stats = []
+        self._pending_leaves = []
 
         # Compute global mean/std entirely on GPU; transfer only tiny vectors.
         mean_gpu = X_gpu.mean(dim=0)                              # (d,) float32
@@ -205,6 +226,7 @@ class EmlSplitTreeRegressor:
 
         indices_gpu = torch.arange(n, dtype=torch.long, device=device)
         self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+        self._root = self._finalize_leaves(self._root)
         self._gpu_tree = self._tensorize_tree(self._root)
 
         # Release references to caller-owned tensors but keep the tensorized
@@ -256,29 +278,65 @@ class EmlSplitTreeRegressor:
         )
 
     def _grow_gpu(
-        self, indices: "torch.Tensor", depth: int, rng: np.random.Generator,
+        self, indices: torch.Tensor, depth: int, rng: np.random.Generator,
     ) -> Node:
         """GPU-native version of `_grow`. `indices` is a long tensor on
         `self._device`; recursion stays on GPU end-to-end."""
         n = int(indices.shape[0])
         if depth >= self.max_depth or n <= 2 * self.min_samples_leaf:
-            return self._fit_leaf(indices)
+            return self._make_pending_leaf(indices)
 
         best = self._find_best_split_gpu(indices, rng)
         if best is None:
-            return self._fit_leaf(indices)
+            return self._make_pending_leaf(indices)
 
         split, _gain, left_mask = best  # left_mask is a GPU bool tensor
         left_count = int(left_mask.sum().item())
         right_count = n - left_count
         if left_count < self.min_samples_leaf or right_count < self.min_samples_leaf:
-            return self._fit_leaf(indices)
+            return self._make_pending_leaf(indices)
 
         return InternalNode(
             split=split,
             left=self._grow_gpu(indices[left_mask], depth + 1, rng),
             right=self._grow_gpu(indices[~left_mask], depth + 1, rng),
         )
+
+    def _make_pending_leaf(self, indices: torch.Tensor) -> _PendingLeaf:
+        p = _PendingLeaf(indices=indices)
+        self._pending_leaves.append(p)
+        return p
+
+    def _finalize_leaves(self, root: Node) -> Node:
+        """Fit every _PendingLeaf collected during growth, then patch the
+        tree. Reference path fits leaves one at a time via _fit_leaf in
+        creation (DFS) order — identical calls to the pre-deferral code,
+        so results are bit-exact. use_stacked_blend always takes the
+        reference path (batched covers the gated policy only)."""
+        pending = self._pending_leaves
+        if not pending:
+            return root
+        use_batched = self._batched_leaves and not self.use_stacked_blend
+        if use_batched:
+            from eml_boost.tree_split._leaf_batch import fit_leaves_batched
+
+            fitted = fit_leaves_batched(self, pending)
+        else:
+            fitted = [self._fit_leaf(p.indices) for p in pending]
+        for p, node in zip(pending, fitted, strict=True):
+            p.resolved = node
+        self._pending_leaves = []
+        return self._replace_pending(root)
+
+    @classmethod
+    def _replace_pending(cls, node: Node) -> Node:
+        if isinstance(node, _PendingLeaf):
+            assert node.resolved is not None
+            return node.resolved
+        if isinstance(node, InternalNode):
+            node.left = cls._replace_pending(node.left)
+            node.right = cls._replace_pending(node.right)
+        return node
 
     def _find_best_split_cpu(
         self, X: np.ndarray, y: np.ndarray, rng: np.random.Generator
@@ -331,8 +389,8 @@ class EmlSplitTreeRegressor:
         return best_split, best_gain, best_mask
 
     def _find_best_split_gpu(
-        self, indices: "torch.Tensor", rng: np.random.Generator
-    ) -> tuple[RawSplit | EmlSplit, float, "torch.Tensor"] | None:
+        self, indices: torch.Tensor, rng: np.random.Generator
+    ) -> tuple[RawSplit | EmlSplit, float, torch.Tensor] | None:
         """GPU-batched histogram split-finding. Indices and the returned
         mask are both torch tensors on self._device — no CPU↔GPU
         transfers per call."""
@@ -344,7 +402,7 @@ class EmlSplitTreeRegressor:
         n_raw = X_node.shape[1]
         feat_cols: list[torch.Tensor] = [X_node]
         valid_candidates: np.ndarray | None = None
-        top_features_gpu: "torch.Tensor" | None = None
+        top_features_gpu: torch.Tensor | None = None
         k_used = 0
 
         if self.n_eml_candidates > 0 and n_raw > 0:
@@ -441,7 +499,7 @@ class EmlSplitTreeRegressor:
         threshold = 0.5 * (v[best_i] + v[best_i + 1])
         return float(threshold), float(gain[best_i])
 
-    def _fit_leaf(self, indices: "torch.Tensor") -> Node:
+    def _fit_leaf(self, indices: torch.Tensor) -> Node:
         """Build a leaf node. Tries an EML expression leaf if enabled and the
         sample count is large enough; falls back to a constant leaf otherwise.
 
@@ -603,16 +661,16 @@ class EmlSplitTreeRegressor:
     def _select_leaf_gated(
         self,
         *,
-        y_full: "torch.Tensor",
-        y_val: "torch.Tensor",
-        eta: "torch.Tensor",
-        bias: "torch.Tensor",
-        preds_val: "torch.Tensor",
-        valid: "torch.Tensor",
+        y_full: torch.Tensor,
+        y_val: torch.Tensor,
+        eta: torch.Tensor,
+        bias: torch.Tensor,
+        preds_val: torch.Tensor,
+        valid: torch.Tensor,
         k: int,
         top_features: np.ndarray,
-        mean_x: "torch.Tensor",
-        std_x: "torch.Tensor",
+        mean_x: torch.Tensor,
+        std_x: torch.Tensor,
         constant_value: float,
         cap_leaf: float,
     ) -> Node:
@@ -676,16 +734,16 @@ class EmlSplitTreeRegressor:
     def _select_leaf_blended(
         self,
         *,
-        y_full: "torch.Tensor",
-        y_val: "torch.Tensor",
-        eta: "torch.Tensor",
-        bias: "torch.Tensor",
-        preds_val: "torch.Tensor",
-        valid: "torch.Tensor",
+        y_full: torch.Tensor,
+        y_val: torch.Tensor,
+        eta: torch.Tensor,
+        bias: torch.Tensor,
+        preds_val: torch.Tensor,
+        valid: torch.Tensor,
         k: int,
         top_features: np.ndarray,
-        mean_x: "torch.Tensor",
-        std_x: "torch.Tensor",
+        mean_x: torch.Tensor,
+        std_x: torch.Tensor,
         constant_value: float,
         cap_leaf: float,
     ) -> Node:
@@ -893,8 +951,8 @@ class EmlSplitTreeRegressor:
 
     @staticmethod
     def _top_features_by_corr_gpu(
-        X: "torch.Tensor", y: "torch.Tensor", k: int
-    ) -> "torch.Tensor":
+        X: torch.Tensor, y: torch.Tensor, k: int
+    ) -> torch.Tensor:
         """GPU-native version of `_top_features_by_corr`.
 
         Returns a long tensor on the same device as X with the indices
@@ -1084,7 +1142,7 @@ class EmlSplitTreeRegressor:
             "n_nodes": n_nodes,
         }
 
-    def _predict_x_gpu(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
+    def _predict_x_gpu(self, X_gpu: torch.Tensor) -> torch.Tensor:
         """GPU-input predict. Tries Triton kernel first; falls back
         to torch loop if Triton fails. Warns once per instance on
         first fallback so silent failures don't go unnoticed."""
@@ -1111,7 +1169,7 @@ class EmlSplitTreeRegressor:
                 self._triton_fallback_warned = True
             return self._predict_x_gpu_torch(X_gpu)
 
-    def _predict_x_gpu_torch(self, X_gpu: "torch.Tensor") -> "torch.Tensor":
+    def _predict_x_gpu_torch(self, X_gpu: torch.Tensor) -> torch.Tensor:
         """Tensorized GPU traversal of the fitted tree using a caller-owned
         GPU tensor. Returns a GPU float32 tensor of shape (n_samples,).
         Does NOT transfer to CPU/numpy.
