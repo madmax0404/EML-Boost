@@ -50,6 +50,12 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         EML leaves use a val-fit convex blend instead of the binary gate.
         Default False per Experiment 9's negative-outcome verdict on
         heavy-tailed datasets (see ``experiments/experiment9/report.md``).
+    tree_growth : str
+        Growth engine: "nodewise" (recursive, the historical engine) or
+        "levelwise" (breadth-first batched — much faster on GPU;
+        statistically equivalent, not bit-identical: descriptor RNG is
+        consumed in BFS order). Default "nodewise" until the CTR23 parity
+        run promotes "levelwise".
     patience : int or None
         Early-stopping patience on an inner validation set. Set to None
         (or 0) to run the full `max_rounds`.
@@ -79,6 +85,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         leaf_eml_cap_k: float = 2.0,
         leaf_l2: float = 1.0,                   # was 0.0; mirrors EmlSplitTreeRegressor
         use_stacked_blend: bool = False,
+        tree_growth: str = "nodewise",
         patience: int | None = 15,
         val_fraction: float = 0.15,
         random_state: int | None = None,
@@ -102,6 +109,11 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
             raise ValueError(f"leaf_l2 must be >= 0, got {leaf_l2}")
         self.leaf_l2 = float(leaf_l2)
         self.use_stacked_blend = use_stacked_blend
+        if tree_growth not in ("nodewise", "levelwise"):
+            raise ValueError(
+                f"tree_growth must be 'nodewise' or 'levelwise', got {tree_growth!r}"
+            )
+        self.tree_growth = tree_growth
         self.patience = patience
         self.val_fraction = val_fraction
         self.random_state = random_state
@@ -169,6 +181,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
                 leaf_eml_cap_k=self.leaf_eml_cap_k,
                 leaf_l2=self.leaf_l2,
                 use_stacked_blend=self.use_stacked_blend,
+                tree_growth=self.tree_growth,
                 random_state=tree_seeds[m],
             ).fit(X_tr, r)
             self._trees.append(tree)
@@ -243,6 +256,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
                 leaf_eml_cap_k=self.leaf_eml_cap_k,
                 leaf_l2=self.leaf_l2,
                 use_stacked_blend=self.use_stacked_blend,
+                tree_growth=self.tree_growth,
                 random_state=tree_seeds[m],
             )._fit_xy_gpu(X_tr_gpu, r_gpu)
             self._trees.append(tree)

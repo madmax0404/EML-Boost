@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 import torch
 
+from eml_boost.tree_split import EmlSplitBoostRegressor
 from eml_boost.tree_split.nodes import EmlLeafNode, InternalNode, RawSplit
 
 requires_cuda = pytest.mark.skipif(
@@ -74,6 +75,86 @@ def test_no_eml_levelwise_matches_nodewise_structure(seed, min_leaf):
         assert rn[1] == rl[1]
         if rn[1] == "raw":
             assert rn[2] == rl[2], f"split feature diverged at {rn[0]}"
-            np.testing.assert_allclose(rl[3], rn[3], rtol=1e-4, atol=1e-5)
+            # Exact equality, not tolerance: both engines compute this
+            # threshold from the SAME shared integer-domain histogram core
+            # (multinode_histogram_split, S=1 vs S=A) — Plan Amendment 1
+            # made per-node quantized sums (and therefore argmax decisions
+            # and bin-edge thresholds) bit-identical by construction. A
+            # nonzero delta here would mean the two dispatch paths have
+            # silently diverged, not float32 noise to tolerate.
+            assert rl[3] == rn[3], f"threshold diverged at {rn[0]}: {rl[3]} vs {rn[3]}"
         elif rn[1] == "leaf":
             np.testing.assert_allclose(rl[2], rn[2], rtol=1e-4, atol=1e-5)
+
+
+def _walk(node):
+    yield node
+    if isinstance(node, InternalNode):
+        yield from _walk(node.left)
+        yield from _walk(node.right)
+
+
+@requires_cuda
+def test_levelwise_boost_eml_invariants():
+    """EML-enabled level-wise boost fit: structural invariants + learning."""
+    from eml_boost._triton_exhaustive import get_valid_descriptors_np
+    from eml_boost.tree_split.nodes import EmlSplit
+
+    X, y = _friedman(n=6000, seed=0)
+    m = EmlSplitBoostRegressor(
+        max_rounds=10, max_depth=6, patience=0, use_gpu=True,
+        random_state=0, tree_growth="levelwise",
+    )
+    m.fit(X, y)
+
+    d = X.shape[1]
+    n_eml_splits = 0
+    valid = {tuple(int(v) for v in row) for row in get_valid_descriptors_np(2, 3)}
+    for t in m._trees:
+        for node in _walk(t._root):
+            if isinstance(node, InternalNode):
+                assert np.isfinite(node.split.threshold)
+                if isinstance(node.split, EmlSplit):
+                    n_eml_splits += 1
+                    assert node.split.snapped.terminal_choices in valid
+                    assert all(0 <= f < d for f in node.split.feature_subset)
+    assert n_eml_splits > 0, "levelwise engine never chose an EML split"
+
+    pred = m.predict(X)
+    assert np.isfinite(pred).all()
+    base = float(np.mean((y - y.mean()) ** 2))
+    fit_mse = float(np.mean((y - pred) ** 2))
+    assert fit_mse < 0.5 * base, f"did not learn: {fit_mse} vs baseline {base}"
+
+
+@requires_cuda
+def test_levelwise_rmse_parity_with_nodewise():
+    """Statistical sanity: same data, both engines, held-out RMSE within a
+    generous band (RNG orders differ; exact match is impossible)."""
+    X, y = _friedman(n=8000, seed=1)
+    Xtr, Xte, ytr, yte = X[:6000], X[6000:], y[:6000], y[6000:]
+
+    def _rmse(growth):
+        m = EmlSplitBoostRegressor(
+            max_rounds=25, max_depth=6, patience=0, use_gpu=True,
+            random_state=1, tree_growth=growth,
+        )
+        m.fit(Xtr, ytr)
+        return float(np.sqrt(np.mean((yte - m.predict(Xte)) ** 2)))
+
+    r_node = _rmse("nodewise")
+    r_lvl = _rmse("levelwise")
+    assert r_lvl < r_node * 1.15, f"levelwise {r_lvl} vs nodewise {r_node}"
+
+
+@requires_cuda
+def test_tree_growth_param_validation_and_sklearn_roundtrip():
+    from sklearn.base import clone
+
+    with pytest.raises(ValueError, match="tree_growth"):
+        from eml_boost.tree_split.tree import EmlSplitTreeRegressor
+
+        EmlSplitTreeRegressor(tree_growth="diagonal")
+    m = EmlSplitBoostRegressor(tree_growth="levelwise")
+    m2 = clone(m)
+    assert m2.tree_growth == "levelwise"
