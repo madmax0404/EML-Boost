@@ -61,10 +61,32 @@ class _Slot:
 def grow_levelwise(
     tree, indices: torch.Tensor, rng: np.random.Generator
 ) -> Node | _PendingLeaf:
+    """Breadth-first GPU tree growth (see module docstring for the engine).
+
+    Determinism: the split-time top-k correlation (``segment_topk_corr`` ->
+    ``segment_corr``'s float ``index_add_``) runs under a scoped
+    ``torch.use_deterministic_algorithms(True)`` — the same pattern as
+    ``_leaf_batch.fit_leaves_batched`` and for the same reason: default CUDA
+    ``index_add_`` atomics accumulate in nondeterministic order, so corr
+    values wobble at float32-ulp scale and can flip top-k selection on
+    exact/near corr ties between duplicated or highly-correlated features
+    (observed on real data, Exp-19 run-2). The scope covers ONLY that call:
+    wrapping the whole growth body failed the 32k speed gate (levelwise
+    ~1.39s vs nodewise ~3.20s = 2.3x < 3x) from deterministic-dispatch cost,
+    and nothing else here needs it — the histogram core accumulates in
+    fixed-point integers, and the remaining float ``index_add_`` uses are
+    0/1 count sums, exact in any order under the n < 2**24 guard below.
+    """
     device = tree._device
     X = tree._X_gpu
     y = tree._y_gpu
     assert device is not None and X is not None and y is not None
+    n = int(indices.shape[0])
+    # float32 count sums (index_add_ of 0/1 masks) require exact integer
+    # representation; float32 mantissa is 24 bits, so n < 2**24.
+    assert n < (1 << 24), (
+        f"levelwise float32 count sums require n < 2**24, got n={n}"
+    )
     d = X.shape[1]
     msl = int(tree.min_samples_leaf)
     C = int(tree.n_eml_candidates)
@@ -136,7 +158,14 @@ def grow_levelwise(
         k_used = 0
         if C > 0 and d > 0:
             k_used = min(tree.k_eml, d)
-            topk = segment_topk_corr(X_a, y_a, seg_a, A, k_used)  # (A, k)
+            # Deterministic index_add_ for the corr reduction only — see the
+            # function docstring for why this call needs it and nothing else.
+            prev_det = torch.are_deterministic_algorithms_enabled()
+            torch.use_deterministic_algorithms(True)
+            try:
+                topk = segment_topk_corr(X_a, y_a, seg_a, A, k_used)  # (A, k)
+            finally:
+                torch.use_deterministic_algorithms(prev_det)
             valid_desc = get_valid_descriptors_np(2, k_used)
             if len(valid_desc) > 0:
                 # BFS-order RNG consumption: one block draw per level.

@@ -66,6 +66,12 @@ def fit_leaves_batched(tree, pending) -> list[Node]:
     L = len(pending)
 
     sizes = [int(p.indices.shape[0]) for p in pending]  # shape metadata, no sync
+    # float32 count sums (index_add_ of fit/val 0/1 masks) require exact
+    # integer representation; float32 mantissa is 24 bits, so total n < 2**24.
+    n = sum(sizes)
+    assert n < (1 << 24), (
+        f"levelwise float32 count sums require n < 2**24, got n={n}"
+    )
     n_raw = tree._X_cpu.shape[1] if tree._X_cpu is not None else 0
 
     # See module docstring: index_add_'s atomic accumulation order can break

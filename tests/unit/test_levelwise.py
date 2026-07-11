@@ -23,6 +23,20 @@ def _friedman(n=6000, d=10, seed=0):
     return X, y
 
 
+def _friedman_corr(n=8000, seed=0):
+    """Friedman with a duplicated column (X[:,4]=X[:,0]) and a near-duplicate
+    (X[:,5]=X[:,1]+tiny noise): forces exact/near correlation ties in
+    segment_topk_corr so the split-time float index_add_ reduction is
+    exercised at ties — the path grow_levelwise's deterministic scope now
+    covers (Exp-19 run-2 evidence)."""
+    X, y = _friedman(n=n, seed=seed)
+    X = X.copy()
+    rng = np.random.default_rng(seed + 100)
+    X[:, 4] = X[:, 0]                                   # exact-duplicate -> corr tie
+    X[:, 5] = X[:, 1] + 1e-6 * rng.standard_normal(n)   # near-duplicate -> near-tie
+    return X, y
+
+
 def _tree_signature(node, out, path="r"):
     """Flatten a tree into comparable (path, kind, payload) rows."""
     if isinstance(node, InternalNode):
@@ -160,10 +174,15 @@ def test_tree_growth_param_validation_and_sklearn_roundtrip():
 
 
 @requires_cuda
-@pytest.mark.parametrize("seed", [0, 7])
-def test_levelwise_same_seed_bitwise_deterministic(seed):
-    """Spec acceptance: two same-seed fits -> byte-identical predictions."""
-    X, y = _friedman(n=8000, seed=seed)
+@pytest.mark.parametrize("seed,corr", [(0, False), (7, False), (0, True)])
+def test_levelwise_same_seed_bitwise_deterministic(seed, corr):
+    """Spec acceptance: two same-seed fits -> byte-identical predictions.
+
+    The corr=True case duplicates/near-duplicates feature columns so
+    segment_topk_corr hits exact/near correlation ties; without the
+    deterministic scope now wrapping grow_levelwise's float index_add_ corr
+    reduction, those ties can flip run-to-run (Exp-19 run-2 evidence)."""
+    X, y = _friedman_corr(n=8000, seed=seed) if corr else _friedman(n=8000, seed=seed)
 
     def _fit_predict():
         m = EmlSplitBoostRegressor(
