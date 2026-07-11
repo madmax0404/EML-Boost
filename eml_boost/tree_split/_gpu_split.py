@@ -18,23 +18,18 @@ several milliseconds of Python dispatch to a few microseconds of GPU time.
 This module provides two implementations:
 
 * ``gpu_histogram_split_torch`` — the original pure-torch implementation
-  using ``scatter_add`` + ``cumsum``. Acts as the numerical oracle and
-  the fallback path.
-* ``gpu_histogram_split`` — top-level dispatcher that tries the Triton
-  kernel from ``_gpu_split_triton.py`` first and falls back to the
-  torch path on any error, warning once per process on the first
-  fallback.
+  using ``scatter_add`` + ``cumsum``. Float32 accumulation order is
+  nondeterministic; retained as the numerical oracle for tests only.
+* ``gpu_histogram_split`` — top-level dispatcher. Routes through the
+  deterministic fixed-point core in ``_multinode_hist.py`` (single
+  segment). The Triton kernel in ``_gpu_split_triton.py`` and
+  ``gpu_histogram_split_torch`` above are no longer in the dispatch
+  path; both remain in-tree as test oracles.
 """
 
 from __future__ import annotations
 
 import torch
-
-
-# Module-level state for the dispatcher's warn-once-on-fallback contract.
-# Set to True after the first time we fall back from the Triton path so
-# subsequent fallbacks don't spam the user's stderr.
-_TRITON_HIST_FALLBACK_WARNED = False
 
 
 def gpu_histogram_split_torch(
@@ -150,30 +145,31 @@ def gpu_histogram_split(
     y: torch.Tensor,
     n_bins: int,
     min_leaf_count: int = 1,
-    leaf_l2: float = 0.0,                       # NEW
+    leaf_l2: float = 0.0,
 ) -> tuple[int, float, float]:
-    """Best-split-finding via histogram. Tries Triton kernel first;
-    falls back to the torch implementation on any error.
+    """Best-split-finding via the deterministic fixed-point histogram core
+    (single-segment `multinode_histogram_split`).
 
-    Warns once per process the first time the fallback fires so silent
-    Triton failures don't go unnoticed in production runs. Mirrors the
-    same dispatcher pattern used for the predict kernel (commit a4df96d).
+    History: this dispatcher previously tried a Triton float-atomic kernel
+    (`_gpu_split_triton.py`) first. Float atomic accumulation is order-
+    nondeterministic; 1-ULP gain wobble flipped near-tied argmax decisions
+    and made same-seed fits unreproducible. The fixed-point core is bitwise
+    deterministic; the Triton kernel and the torch float implementation
+    above remain in-tree as test oracles only. Contract unchanged:
+    returns (feature_idx, threshold, gain); gain <= 0 means "no split".
     """
-    try:
-        from eml_boost.tree_split._gpu_split_triton import (
-            gpu_histogram_split_triton,
-        )
-        return gpu_histogram_split_triton(feats, y, n_bins, min_leaf_count, leaf_l2)
-    except Exception as exc:  # broad catch: any kernel-level failure (compile, OOM, illegal mem) falls back to torch; warn-once below surfaces the issue.
-        global _TRITON_HIST_FALLBACK_WARNED
-        if not _TRITON_HIST_FALLBACK_WARNED:
-            import warnings
-            warnings.warn(
-                f"Triton histogram-split kernel failed; falling back to torch. "
-                f"This warning fires once per process. "
-                f"{type(exc).__name__}: {exc}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            _TRITON_HIST_FALLBACK_WARNED = True
-        return gpu_histogram_split_torch(feats, y, n_bins, min_leaf_count, leaf_l2)
+    from eml_boost.tree_split._multinode_hist import multinode_histogram_split
+
+    n = feats.shape[0]
+    if n < 2 * min_leaf_count:
+        return 0, 0.0, 0.0
+    seg = torch.zeros(n, dtype=torch.long, device=feats.device)
+    col, thr, gain = multinode_histogram_split(
+        feats, y, seg, 1, n_bins, min_leaf_count, leaf_l2
+    )
+    # col/thr/gain are shape (1,) (single segment); index to 0-dim before
+    # stacking so the single .cpu() sync yields a flat (3,) array of
+    # scalars (stacking the (1,)-shaped tensors directly gives (3, 1),
+    # which numpy refuses to convert via int()/float()).
+    out = torch.stack([col[0].float(), thr[0], gain[0]]).cpu().numpy()
+    return int(out[0]), float(out[1]), float(out[2])

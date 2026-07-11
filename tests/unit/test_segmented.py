@@ -68,3 +68,17 @@ def test_segment_corr_empty_segment_is_zero():
     got = segment_corr(X, y, seg, n_seg + 3)  # 3 segments with no rows
     assert torch.isfinite(got).all()
     assert torch.equal(got[n_seg:], torch.zeros_like(got[n_seg:]))
+
+
+@requires_cuda
+def test_segment_minmax_matches_loop():
+    from eml_boost.tree_split._segmented import segment_minmax
+    rng = np.random.default_rng(1)
+    vals = torch.tensor(rng.standard_normal((5000, 4)), dtype=torch.float32, device="cuda")
+    seg = torch.tensor(rng.integers(0, 6, size=5000), dtype=torch.long, device="cuda")
+    mn, mx = segment_minmax(vals, seg, 8)  # segments 6, 7 empty
+    for s in range(6):
+        m = seg == s
+        assert torch.equal(mn[s], vals[m].min(dim=0).values)
+        assert torch.equal(mx[s], vals[m].max(dim=0).values)
+    assert bool(torch.isinf(mn[6:]).all()) and bool(torch.isinf(mx[6:]).all())

@@ -73,3 +73,23 @@ def segment_topk_corr(
     corr = segment_corr(X, y, seg_id, n_segments)
     k_clipped = min(k, X.shape[1])
     return torch.topk(corr, k_clipped, dim=1, sorted=True).indices.to(torch.long)
+
+
+def segment_minmax(
+    values: torch.Tensor, seg_id: torch.Tensor, n_segments: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-(segment, column) min and max: ((S, C), (S, C)) float32.
+
+    min/max are associative+commutative, so scatter_reduce_ is bitwise
+    deterministic regardless of atomic ordering. Empty segments return
+    (+inf, -inf) — callers must mask them (their bin width degenerates).
+    """
+    n, c = values.shape
+    idx = seg_id.unsqueeze(1).expand(n, c)
+    mn = torch.full(
+        (n_segments, c), float("inf"), device=values.device
+    ).scatter_reduce_(0, idx, values, reduce="amin", include_self=True)
+    mx = torch.full(
+        (n_segments, c), -float("inf"), device=values.device
+    ).scatter_reduce_(0, idx, values, reduce="amax", include_self=True)
+    return mn, mx
