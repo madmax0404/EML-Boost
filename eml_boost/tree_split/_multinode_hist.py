@@ -84,15 +84,23 @@ def multinode_histogram_split(
     flat = (seg_id.unsqueeze(1) * (c * B) + col_offs + bin_idx).reshape(-1)
 
     slots = S * c * B
-    hist_sum = torch.zeros(slots, dtype=torch.int64, device=device).scatter_add_(
-        0, flat, y_q.unsqueeze(1).expand(n, c).reshape(-1)
+    # Fuse the three per-stat scatters into ONE scatter_add_ over a
+    # (3 * slots,) buffer: stat k accumulates into the disjoint block
+    # [k*slots : (k+1)*slots], sharing the same `flat` bin locations shifted
+    # by k*slots. Integer adds are exact and order-independent, so the
+    # sum/sq/cnt totals are bit-identical to three separate calls — one
+    # kernel launch instead of three on a launch-bound workload.
+    y_q_e = y_q.unsqueeze(1).expand(n, c).reshape(-1)
+    y2_q_e = y2_q.unsqueeze(1).expand(n, c).reshape(-1)
+    ones_e = torch.ones(n * c, dtype=torch.int64, device=device)
+    fused_idx = torch.cat([flat, flat + slots, flat + 2 * slots])
+    fused_val = torch.cat([y_q_e, y2_q_e, ones_e])
+    hist = torch.zeros(3 * slots, dtype=torch.int64, device=device).scatter_add_(
+        0, fused_idx, fused_val
     )
-    hist_sq = torch.zeros(slots, dtype=torch.int64, device=device).scatter_add_(
-        0, flat, y2_q.unsqueeze(1).expand(n, c).reshape(-1)
-    )
-    hist_cnt = torch.zeros(slots, dtype=torch.int64, device=device).scatter_add_(
-        0, flat, torch.ones(n * c, dtype=torch.int64, device=device)
-    )
+    hist_sum = hist[:slots]
+    hist_sq = hist[slots : 2 * slots]
+    hist_cnt = hist[2 * slots :]
 
     # Prefix-sum the histograms in int64 BEFORE dequantizing. Integer prefix
     # sums are exact and order-independent, so a segment's cumulative bins
