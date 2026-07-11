@@ -44,7 +44,8 @@ def test_leaf_deferral_matches_snapshot():
 
     X, y = _friedman()
     model = EmlSplitBoostRegressor(
-        max_rounds=8, max_depth=6, patience=0, use_gpu=True, random_state=0
+        max_rounds=8, max_depth=6, patience=0, use_gpu=True, random_state=0,
+        tree_growth="nodewise",  # snapshot is a nodewise artifact by intent; pin post-Exp-19 default flip
     )
     # Force reference per-leaf finalize on the trees this boost fit creates
     # (attribute exists only post-refactor; pre-refactor this is a no-op).

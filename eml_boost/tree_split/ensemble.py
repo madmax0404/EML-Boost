@@ -54,8 +54,9 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         Growth engine: "nodewise" (recursive, the historical engine) or
         "levelwise" (breadth-first batched — much faster on GPU;
         statistically equivalent, not bit-identical: descriptor RNG is
-        consumed in BFS order). Default "nodewise" until the CTR23 parity
-        run promotes "levelwise".
+        consumed in BFS order). Default "levelwise" as of Exp-19 (RMSE
+        parity gates passed); "nodewise" is retained as the reference/
+        oracle engine.
     patience : int or None
         Early-stopping patience on an inner validation set. Set to None
         (or 0) to run the full `max_rounds`.
@@ -85,7 +86,7 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         leaf_eml_cap_k: float = 2.0,
         leaf_l2: float = 1.0,                   # was 0.0; mirrors EmlSplitTreeRegressor
         use_stacked_blend: bool = False,
-        tree_growth: str = "nodewise",
+        tree_growth: str = "levelwise",       # was "nodewise"; flipped after Exp-19 parity gates (RMSE) passed
         patience: int | None = 15,
         val_fraction: float = 0.15,
         random_state: int | None = None,

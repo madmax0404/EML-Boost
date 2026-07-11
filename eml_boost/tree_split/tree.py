@@ -101,7 +101,7 @@ class EmlSplitTreeRegressor:
         leaf_eml_cap_k: float = 2.0,
         leaf_l2: float = 1.0,                   # was 0.0; flipped to match XGBoost reg_lambda default
         use_stacked_blend: bool = False,
-        tree_growth: str = "nodewise",
+        tree_growth: str = "levelwise",       # was "nodewise"; flipped after Exp-19 parity gates (RMSE) passed
         random_state: int | None = None,
     ):
         if eml_depth != 2:
