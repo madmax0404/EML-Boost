@@ -61,3 +61,97 @@ def test_leaf_deferral_matches_snapshot():
         pytest.skip("snapshot captured; rerun to compare")
     want = np.load(SNAPSHOT)
     np.testing.assert_array_equal(pred, want)
+
+
+def _manual_tree(X, y, **hyper):
+    """Instantiate a tree with GPU internals populated, without growing.
+
+    Lets tests call _fit_leaf / fit_leaves_batched on hand-built leaves.
+    """
+    from eml_boost.tree_split.tree import EmlSplitTreeRegressor
+
+    t = EmlSplitTreeRegressor(**hyper)
+    device = torch.device("cuda")
+    t._device = device
+    t._X_cpu = X
+    t._X_gpu = torch.tensor(X, dtype=torch.float32, device=device)
+    t._y_gpu = torch.tensor(y, dtype=torch.float32, device=device)
+    t._global_mean = X.mean(axis=0)
+    t._global_std = np.maximum(X.std(axis=0), 1e-6)
+    t._global_mean_gpu = torch.tensor(t._global_mean, dtype=torch.float32, device=device)
+    t._global_std_gpu = torch.tensor(t._global_std, dtype=torch.float32, device=device)
+    return t
+
+
+@requires_cuda
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_batched_leaf_fit_matches_reference(seed):
+    """fit_leaves_batched vs per-leaf _fit_leaf on identical leaf partitions:
+    identical node types, identical descriptor/feature choices, params
+    within float32 reduction-order tolerance."""
+    from eml_boost.tree_split._leaf_batch import fit_leaves_batched
+    from eml_boost.tree_split.nodes import EmlLeafNode, LeafNode
+    from eml_boost.tree_split.tree import _PendingLeaf
+
+    rng = np.random.default_rng(seed)
+    X, y = _friedman(n=4000, seed=seed)
+    t = _manual_tree(X, y)  # library defaults: k_leaf_eml=1, gated
+
+    # Hand-build a mix of leaf sizes: below-eligibility, boundary, large.
+    order = rng.permutation(len(X))
+    sizes = [3, 12, 29, 30, 31, 60, 200, 800, len(X) - 1165]
+    pending, start = [], 0
+    for sz in sizes:
+        idx = torch.tensor(order[start : start + sz], dtype=torch.long, device="cuda")
+        pending.append(_PendingLeaf(indices=idx))
+        start += sz
+
+    ref = [t._fit_leaf(p.indices) for p in pending]
+    got = fit_leaves_batched(t, pending)
+
+    assert len(got) == len(ref)
+    for r, g in zip(ref, got, strict=True):
+        assert type(r) is type(g)
+        if isinstance(r, LeafNode):
+            np.testing.assert_allclose(g.value, r.value, rtol=1e-4, atol=1e-6)
+        else:
+            assert isinstance(r, EmlLeafNode)
+            assert g.snapped.terminal_choices == r.snapped.terminal_choices
+            assert g.feature_subset == r.feature_subset
+            np.testing.assert_allclose(g.eta, r.eta, rtol=1e-3, atol=1e-6)
+            np.testing.assert_allclose(g.bias, r.bias, rtol=1e-3, atol=1e-6)
+            np.testing.assert_allclose(g.cap, r.cap, rtol=1e-4)
+            np.testing.assert_allclose(g.feature_mean, r.feature_mean, rtol=1e-5)
+            np.testing.assert_allclose(g.feature_std, r.feature_std, rtol=1e-5)
+
+
+@requires_cuda
+def test_batched_leaf_fit_ridge_and_capless_variants():
+    """leaf_eml_ridge>0 and leaf_eml_cap_k=0 branches match reference."""
+    from eml_boost.tree_split._leaf_batch import fit_leaves_batched
+    from eml_boost.tree_split.tree import _PendingLeaf
+
+    X, y = _friedman(n=2000, seed=3)
+    for hyper in (dict(leaf_eml_ridge=0.5), dict(leaf_eml_cap_k=0.0)):
+        t = _manual_tree(X, y, **hyper)
+        idx = torch.arange(0, 900, dtype=torch.long, device="cuda")
+        pending = [_PendingLeaf(indices=idx)]
+        (ref,), (got,) = [t._fit_leaf(idx)], fit_leaves_batched(t, pending)
+        assert type(ref) is type(got)
+        if hasattr(ref, "eta"):
+            np.testing.assert_allclose(got.eta, ref.eta, rtol=1e-3, atol=1e-6)
+            np.testing.assert_allclose(got.bias, ref.bias, rtol=1e-3, atol=1e-6)
+
+
+@requires_cuda
+def test_batched_leaf_fit_empty_and_zero_row_leaf():
+    from eml_boost.tree_split._leaf_batch import fit_leaves_batched
+    from eml_boost.tree_split.nodes import LeafNode
+    from eml_boost.tree_split.tree import _PendingLeaf
+
+    X, y = _friedman(n=200, seed=4)
+    t = _manual_tree(X, y)
+    assert fit_leaves_batched(t, []) == []
+    empty = _PendingLeaf(indices=torch.empty(0, dtype=torch.long, device="cuda"))
+    (got,) = fit_leaves_batched(t, [empty])
+    assert isinstance(got, LeafNode) and got.value == 0.0
