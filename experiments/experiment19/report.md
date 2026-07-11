@@ -104,10 +104,10 @@ per-round cost result, not a fewer-rounds artifact.
 - **Datasets with full 5-seed × 3-model coverage:** 34
 - **Fetch failures (excluded from ratios):** 1 — `red_wine`, the same
   `IndexError: too many indices for array: array is 0-dimensional, but 1 were indexed`
-  at the OpenML data-fetch stage seen in Exp 18. This is now the **third consecutive
-  occurrence** (Exp 17 flagged the OpenML payload-shape edge case, Exp 18 hit it, Exp 19
-  hits it again). It is an OpenML data-integrity issue, not a SB bug. Recorded in
-  `failures.json`.
+  at the OpenML data-fetch stage seen in Exp 18. Exp 19 is the **second experiment** to
+  hit it, and the failure is deterministic: it has reproduced in all three runs to date
+  (Exp 18's run plus both Exp-19 runs). It is an OpenML data-integrity issue, not a SB
+  bug. Recorded in `failures.json`.
 
 ## Headline results (dual gate: RMSE parity + timing)
 
@@ -139,7 +139,7 @@ shape of the Exp-18 headline is preserved.
 |---|---|---|---|---|
 | SB suite fit-time total | **167 s** | 691 s | — | |
 | XGB suite fit-time total | 12 s | 12 s | — | |
-| **SB / XGB suite ratio** | **14.17×** | 58.7× | **≤ 10×** | **UNMET** |
+| **SB / XGB suite ratio** | **14.17×** | 59.6× | **≤ 10×** | **UNMET** |
 | SB suite speedup (Exp-18 → Exp-19) | **4.14×** | — | — | |
 | Per-dataset SB/XGB timing (median) | **12.4×** | 58.5× | — | |
 | Per-dataset SB speedup (median) | **4.1×** | — | — | |
@@ -234,7 +234,7 @@ seed-noise envelope; the gate check flagged 0/34.
 
 | dataset | ratio | SB RMSE (std) | XGB RMSE (std) | notes |
 |---|---|---|---|---|
-| brazilian_houses | 1.720 | 7398 (4560) | 4301 (2670) | High seed variance: SB std/mean = 0.62; per-seed RMSEs span 2504–15201 |
+| brazilian_houses | 1.720 | 7398 (4560) | 4301 (2670) | High seed variance: SB std/mean = 0.62; per-seed RMSEs span 2409–14333 |
 | solar_flare | 1.098 | 0.766 (0.052) | 0.698 (0.061) | Borderline; now *within* 10% (was 1.105) |
 | forest_fires | 1.089 | 81.2 (22.6) | 74.58 (26.0) | Borderline; now *within* 10% (was 1.108) |
 | wave_energy | 1.020 | 21456 (167) | 21041 (186) | Tied within 2% |
@@ -246,7 +246,7 @@ seed-noise envelope; the gate check flagged 0/34.
 
 The only **structural loss greater than 10%** is `brazilian_houses`, unchanged from
 Exp 18 as both the sole >10% loss and the driver of the max ratio. Its per-seed SB RMSEs
-span 2504–15201 with std=4560 ≈ 62% of the mean — this is a high-variance dataset where
+span 2409–14333 with std=4560 ≈ 62% of the mean — this is a high-variance dataset where
 seed luck dominates, not a clean architectural loss (XGB shows the same ~62% relative
 variance). The Exp-18 verdict stands: a targeted 20-seed re-run would likely shrink it
 toward parity. The two borderline losses `solar_flare` and `forest_fires` are now *inside*
@@ -285,7 +285,7 @@ the deltas isolate the engine change.
 | Catastrophic | 0% | 0% | unchanged |
 | Max loss ratio | 1.706 | 1.720 | +0.014 (same dataset) |
 | SB suite fit-time | 691 s | 167 s | **4.1× faster** |
-| SB/XGB suite ratio | 58.7× | 14.17× | **4.1× closer to XGB** |
+| SB/XGB suite ratio | 59.6× | 14.17× | **4.2× closer to XGB** |
 | Same-seed determinism | no (float atomics) | **yes (fixed-point)** | first for project |
 
 The engine is **statistically equivalent on accuracy and strictly better on every other
@@ -364,8 +364,8 @@ Triton before reconsidering the goal." Torch-first landed at 14.17×. The recomm
 carries forward as the named next phase.
 
 **OpenML data hygiene** (unchanged from Exp 18). `red_wine` failed the OpenML fetch with
-the same `IndexError` for the third experiment running — an OpenML payload-shape edge
-case, not a SB fault. Categorical features are one-hot encoded (`pd.get_dummies`) with
+the same `IndexError` in both Exp-19 runs, as it did in Exp 18 — a deterministic OpenML
+payload-shape edge case, not a SB fault. Categorical features are one-hot encoded (`pd.get_dummies`) with
 NaN-row drops; XGB/LGB native categorical handling is not used, so all three algorithms
 receive the same float matrix.
 
