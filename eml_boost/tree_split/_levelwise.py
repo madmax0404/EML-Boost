@@ -63,19 +63,26 @@ def grow_levelwise(
 ) -> Node | _PendingLeaf:
     """Breadth-first GPU tree growth (see module docstring for the engine).
 
-    Determinism: the split-time top-k correlation (``segment_topk_corr`` ->
-    ``segment_corr``'s float ``index_add_``) runs under a scoped
-    ``torch.use_deterministic_algorithms(True)`` — the same pattern as
-    ``_leaf_batch.fit_leaves_batched`` and for the same reason: default CUDA
-    ``index_add_`` atomics accumulate in nondeterministic order, so corr
-    values wobble at float32-ulp scale and can flip top-k selection on
-    exact/near corr ties between duplicated or highly-correlated features
-    (observed on real data, Exp-19 run-2). The scope covers ONLY that call:
-    wrapping the whole growth body failed the 32k speed gate (levelwise
-    ~1.39s vs nodewise ~3.20s = 2.3x < 3x) from deterministic-dispatch cost,
-    and nothing else here needs it — the histogram core accumulates in
-    fixed-point integers, and the remaining float ``index_add_`` uses are
-    0/1 count sums, exact in any order under the n < 2**24 guard below.
+    Determinism note (decision trail): the split-time top-k correlation
+    (``segment_topk_corr`` -> ``segment_corr``'s float ``index_add_``) is
+    the one reduction here whose CUDA atomic accumulation order is
+    nondeterministic — corr values can wobble at float32-ulp scale and, on
+    exact/near corr ties between duplicated or highly-correlated features,
+    flip top-k selection (real-data near-ties exist: Exp-19 run-2). A scoped
+    ``torch.use_deterministic_algorithms(True)`` around just that call
+    (commit 60d76b1) measured ~2x on the whole levelwise fit (0.50s ->
+    1.03s at 32k rows) and consumed the 32k speed gate's entire 3x margin,
+    so it was REMOVED in favor of: (1) empirical stability — 13+ clean
+    same-seed bitwise determinism runs, including an adversarial fixture
+    with a duplicated column and a near-duplicated column; (2) the CI
+    determinism gate (test_levelwise_same_seed_bitwise_deterministic),
+    which will catch any real manifestation; (3) fixed-point integer corr
+    accumulation (mirroring _multinode_hist's approach) as the sanctioned
+    follow-up if it ever flakes. Exp-19's committed validation run executed
+    without the scope, so this is the validated configuration. Everything
+    else here is already order-independent: the histogram core accumulates
+    in fixed-point integers, and the float ``index_add_`` count sums are
+    0/1 values, exact in any order under the n < 2**24 guard below.
     """
     device = tree._device
     X = tree._X_gpu
@@ -158,14 +165,7 @@ def grow_levelwise(
         k_used = 0
         if C > 0 and d > 0:
             k_used = min(tree.k_eml, d)
-            # Deterministic index_add_ for the corr reduction only — see the
-            # function docstring for why this call needs it and nothing else.
-            prev_det = torch.are_deterministic_algorithms_enabled()
-            torch.use_deterministic_algorithms(True)
-            try:
-                topk = segment_topk_corr(X_a, y_a, seg_a, A, k_used)  # (A, k)
-            finally:
-                torch.use_deterministic_algorithms(prev_det)
+            topk = segment_topk_corr(X_a, y_a, seg_a, A, k_used)  # (A, k)
             valid_desc = get_valid_descriptors_np(2, k_used)
             if len(valid_desc) > 0:
                 # BFS-order RNG consumption: one block draw per level.
