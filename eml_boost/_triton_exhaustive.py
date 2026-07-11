@@ -501,3 +501,136 @@ def evaluate_trees_triton(
         BLOCK_SAMPLES=block_samples,
     )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Row-wise multi-descriptor evaluator (level-wise engine step-4 primitive)
+# ---------------------------------------------------------------------------
+#
+# Every active row evaluates its own frontier node's C candidate descriptors
+# in one launch: out[c, i] = eval(desc_nodes[node_of[i], c], X[i]). This
+# differs from evaluate_trees_torch/_triton above (which evaluate every
+# tree against every sample, an all-pairs product) by indirecting through
+# node_of so each row only ever touches its own node's candidates.
+
+
+def evaluate_trees_torch_nodewise(
+    desc_nodes: torch.Tensor,
+    node_of: torch.Tensor,
+    X: torch.Tensor,
+    k: int,
+) -> torch.Tensor:
+    """Torch reference: per-row evaluation of that row's node's C descriptors.
+
+    desc_nodes: (L, C, 6) int32; node_of: (N,) long; X: (N, k).
+    Returns (C, N): out[c, i] = eval(desc_nodes[node_of[i], c], X[i]).
+    """
+    C = desc_nodes.shape[1]
+    n = X.shape[0]
+    out = torch.empty(C, n, dtype=X.dtype, device=X.device)
+    per_row = desc_nodes[node_of]  # (N, C, 6)
+    for c in range(C):
+        out[c] = evaluate_trees_torch_per_sample(per_row[:, c, :], X, k)
+    return out
+
+
+if _TRITON_AVAILABLE:
+
+    @triton.jit
+    def _eval_depth2_nodewise_kernel(
+        X_ptr,
+        desc_ptr,      # (L, C, 6) int32 contiguous
+        node_ptr,      # (N,) int32
+        out_ptr,       # (C, N) float32
+        n_samples,
+        C: tl.constexpr,
+        X_stride_sample,
+        K: tl.constexpr,
+        EXP_CLAMP: tl.constexpr,
+        LOG_EPS: tl.constexpr,
+        BLOCK_SAMPLES: tl.constexpr,
+    ):
+        """One program per (candidate c, sample block). Each row loads its
+        node id, then its node's c-th descriptor (6 ints), selects terminals
+        via the same constexpr-unrolled mask arithmetic as
+        _eval_depth2_kernel, and writes out[c, i]."""
+        pid_c = tl.program_id(0)
+        pid_s = tl.program_id(1)
+        offs = pid_s * BLOCK_SAMPLES + tl.arange(0, BLOCK_SAMPLES)
+        mask = offs < n_samples
+
+        node = tl.load(node_ptr + offs, mask=mask, other=0)
+        dbase = (node * C + pid_c) * 6
+        c0 = tl.load(desc_ptr + dbase + 0, mask=mask, other=0)
+        c1 = tl.load(desc_ptr + dbase + 1, mask=mask, other=0)
+        c2 = tl.load(desc_ptr + dbase + 2, mask=mask, other=0)
+        c3 = tl.load(desc_ptr + dbase + 3, mask=mask, other=0)
+        c4 = tl.load(desc_ptr + dbase + 4, mask=mask, other=0)
+        c5 = tl.load(desc_ptr + dbase + 5, mask=mask, other=0)
+
+        one = tl.full((BLOCK_SAMPLES,), 1.0, dtype=tl.float32)
+        feat_base = X_ptr + offs * X_stride_sample
+
+        v_c2 = one * (c2 == 0).to(tl.float32)
+        v_c3 = one * (c3 == 0).to(tl.float32)
+        v_c4 = one * (c4 == 0).to(tl.float32)
+        v_c5 = one * (c5 == 0).to(tl.float32)
+        left = one * (c0 == 0).to(tl.float32)
+        right = one * (c1 == 0).to(tl.float32)
+        for j in tl.static_range(K):
+            x_j = tl.load(feat_base + j, mask=mask, other=0.0)
+            v_c2 = v_c2 + (c2 == (j + 1)).to(tl.float32) * x_j
+            v_c3 = v_c3 + (c3 == (j + 1)).to(tl.float32) * x_j
+            v_c4 = v_c4 + (c4 == (j + 1)).to(tl.float32) * x_j
+            v_c5 = v_c5 + (c5 == (j + 1)).to(tl.float32) * x_j
+            left = left + (c0 == (j + 1)).to(tl.float32) * x_j
+            right = right + (c1 == (j + 1)).to(tl.float32) * x_j
+
+        node_0 = tl.exp(tl.minimum(tl.maximum(v_c2, -EXP_CLAMP), EXP_CLAMP)) - tl.log(
+            tl.maximum(v_c3, LOG_EPS)
+        )
+        node_1 = tl.exp(tl.minimum(tl.maximum(v_c4, -EXP_CLAMP), EXP_CLAMP)) - tl.log(
+            tl.maximum(v_c5, LOG_EPS)
+        )
+        left = left + (c0 == (K + 1)).to(tl.float32) * node_0
+        right = right + (c1 == (K + 1)).to(tl.float32) * node_1
+
+        out = tl.exp(tl.minimum(tl.maximum(left, -EXP_CLAMP), EXP_CLAMP)) - tl.log(
+            tl.maximum(right, LOG_EPS)
+        )
+        tl.store(out_ptr + pid_c * n_samples + offs, out, mask=mask)
+
+
+def evaluate_trees_triton_nodewise(
+    desc_nodes: torch.Tensor,
+    node_of: torch.Tensor,
+    X: torch.Tensor,
+    k: int,
+    block_samples: int = 256,
+) -> torch.Tensor:
+    """Triton row-wise multi-descriptor evaluator; falls back to torch."""
+    if not _TRITON_AVAILABLE or k > _MAX_K or not X.is_cuda:
+        return evaluate_trees_torch_nodewise(desc_nodes, node_of, X, k)
+    desc_nodes = desc_nodes.to(torch.int32).contiguous()
+    node_of32 = node_of.to(torch.int32).contiguous()
+    X = X.contiguous().to(torch.float32)
+    L, C, _ = desc_nodes.shape
+    n = X.shape[0]
+    out = torch.empty(C, n, device=X.device, dtype=torch.float32)
+    if n == 0:
+        return out
+    grid = (C, triton.cdiv(n, block_samples))
+    _eval_depth2_nodewise_kernel[grid](
+        X,
+        desc_nodes,
+        node_of32,
+        out,
+        n,
+        C=C,
+        X_stride_sample=X.stride(0),
+        K=k,
+        EXP_CLAMP=_EXP_CLAMP,
+        LOG_EPS=_LOG_EPS,
+        BLOCK_SAMPLES=block_samples,
+    )
+    return out

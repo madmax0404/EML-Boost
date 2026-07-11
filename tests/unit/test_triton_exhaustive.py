@@ -121,3 +121,66 @@ def test_build_descriptor_round_trip() -> None:
     packed = build_descriptor_depth2(trees)
     for row, tree in zip(packed, trees):
         assert tuple(int(v) for v in row) == tree.terminal_choices
+
+
+def test_evaluate_trees_torch_nodewise_matches_per_sample():
+    import numpy as np
+    import torch
+
+    from eml_boost._triton_exhaustive import (
+        evaluate_trees_torch_nodewise,
+        evaluate_trees_torch_per_sample,
+        get_valid_descriptors_np,
+    )
+
+    rng = np.random.default_rng(0)
+    L, C, k, N = 7, 10, 3, 4000
+    valid = get_valid_descriptors_np(2, k)
+    desc_nodes = torch.tensor(
+        valid[rng.integers(0, len(valid), size=(L, C))], dtype=torch.int32
+    )  # (L, C, 6)
+    node_of = torch.tensor(rng.integers(0, L, size=N), dtype=torch.long)
+    X = torch.tensor(rng.standard_normal((N, k)), dtype=torch.float32)
+
+    got = evaluate_trees_torch_nodewise(desc_nodes, node_of, X, k)  # (C, N)
+    assert got.shape == (C, N)
+    for c in range(C):
+        want = evaluate_trees_torch_per_sample(desc_nodes[node_of, c, :], X, k)
+        np.testing.assert_allclose(
+            got[c].numpy(), want.numpy(), rtol=1e-5, atol=1e-6
+        )
+
+
+def test_evaluate_trees_triton_nodewise_matches_torch():
+    import numpy as np
+    import pytest
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
+    from eml_boost._triton_exhaustive import (
+        evaluate_trees_torch_nodewise,
+        evaluate_trees_triton_nodewise,
+        get_valid_descriptors_np,
+    )
+
+    rng = np.random.default_rng(1)
+    L, C, k, N = 12, 10, 3, 50_000
+    valid = get_valid_descriptors_np(2, k)
+    desc_nodes = torch.tensor(
+        valid[rng.integers(0, len(valid), size=(L, C))],
+        dtype=torch.int32, device="cuda",
+    )
+    node_of = torch.tensor(rng.integers(0, L, size=N), dtype=torch.long, device="cuda")
+    X = torch.tensor(
+        rng.standard_normal((N, k)), dtype=torch.float32, device="cuda"
+    )
+
+    got = evaluate_trees_triton_nodewise(desc_nodes, node_of, X, k)
+    want = evaluate_trees_torch_nodewise(desc_nodes, node_of, X, k)
+    # exp(50)-scale values possible; rtol comparison handles magnitude.
+    np.testing.assert_allclose(
+        got.cpu().numpy(), want.cpu().numpy(), rtol=1e-3, atol=1e-4
+    )
+    # Guard against silent fallback: outputs must come from the kernel path.
+    assert got.is_cuda
