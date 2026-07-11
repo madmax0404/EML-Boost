@@ -34,7 +34,6 @@ def test_segment_counts_matches_bincount():
 @requires_cuda
 def test_segment_corr_matches_per_node_reference():
     from eml_boost.tree_split._segmented import segment_corr
-    from eml_boost.tree_split.tree import EmlSplitTreeRegressor
     X, y, seg, n_seg = _make_segments()
     got = segment_corr(X, y, seg, n_seg)  # (S, D)
     for s in range(n_seg):
