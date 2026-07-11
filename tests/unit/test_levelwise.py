@@ -147,7 +147,6 @@ def test_levelwise_rmse_parity_with_nodewise():
     assert r_lvl < r_node * 1.15, f"levelwise {r_lvl} vs nodewise {r_node}"
 
 
-@requires_cuda
 def test_tree_growth_param_validation_and_sklearn_roundtrip():
     from sklearn.base import clone
 

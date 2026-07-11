@@ -143,8 +143,11 @@ def test_nodewise_fit_run_to_run_deterministic():
     )
 
     def _fit_predict():
+        # Pin nodewise: this test guards the nodewise oracle's fixed-point
+        # histogram determinism, which the levelwise default would bypass.
         m = EmlSplitBoostRegressor(
-            max_rounds=8, max_depth=6, patience=0, use_gpu=True, random_state=0
+            max_rounds=8, max_depth=6, patience=0, use_gpu=True,
+            random_state=0, tree_growth="nodewise",
         )
         m.fit(X, y)
         return m.predict(X[:500])

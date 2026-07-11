@@ -514,7 +514,7 @@ def evaluate_trees_triton(
 # node_of so each row only ever touches its own node's candidates.
 
 
-def evaluate_trees_torch_nodewise(
+def evaluate_trees_torch_rowwise(
     desc_nodes: torch.Tensor,
     node_of: torch.Tensor,
     X: torch.Tensor,
@@ -537,7 +537,7 @@ def evaluate_trees_torch_nodewise(
 if _TRITON_AVAILABLE:
 
     @triton.jit
-    def _eval_depth2_nodewise_kernel(
+    def _eval_depth2_rowwise_kernel(
         X_ptr,
         desc_ptr,      # (L, C, 6) int32 contiguous
         node_ptr,      # (N,) int32
@@ -601,7 +601,7 @@ if _TRITON_AVAILABLE:
         tl.store(out_ptr + pid_c * n_samples + offs, out, mask=mask)
 
 
-def evaluate_trees_triton_nodewise(
+def evaluate_trees_triton_rowwise(
     desc_nodes: torch.Tensor,
     node_of: torch.Tensor,
     X: torch.Tensor,
@@ -610,7 +610,7 @@ def evaluate_trees_triton_nodewise(
 ) -> torch.Tensor:
     """Triton row-wise multi-descriptor evaluator; falls back to torch."""
     if not _TRITON_AVAILABLE or k > _MAX_K or not X.is_cuda:
-        return evaluate_trees_torch_nodewise(desc_nodes, node_of, X, k)
+        return evaluate_trees_torch_rowwise(desc_nodes, node_of, X, k)
     desc_nodes = desc_nodes.to(torch.int32).contiguous()
     node_of32 = node_of.to(torch.int32).contiguous()
     X = X.contiguous().to(torch.float32)
@@ -620,7 +620,7 @@ def evaluate_trees_triton_nodewise(
     if n == 0:
         return out
     grid = (C, triton.cdiv(n, block_samples))
-    _eval_depth2_nodewise_kernel[grid](
+    _eval_depth2_rowwise_kernel[grid](
         X,
         desc_nodes,
         node_of32,

@@ -123,13 +123,13 @@ def test_build_descriptor_round_trip() -> None:
         assert tuple(int(v) for v in row) == tree.terminal_choices
 
 
-def test_evaluate_trees_torch_nodewise_matches_per_sample():
+def test_evaluate_trees_torch_rowwise_matches_per_sample():
     import numpy as np
     import torch
 
     from eml_boost._triton_exhaustive import (
-        evaluate_trees_torch_nodewise,
         evaluate_trees_torch_per_sample,
+        evaluate_trees_torch_rowwise,
         get_valid_descriptors_np,
     )
 
@@ -142,7 +142,7 @@ def test_evaluate_trees_torch_nodewise_matches_per_sample():
     node_of = torch.tensor(rng.integers(0, L, size=N), dtype=torch.long)
     X = torch.tensor(rng.standard_normal((N, k)), dtype=torch.float32)
 
-    got = evaluate_trees_torch_nodewise(desc_nodes, node_of, X, k)  # (C, N)
+    got = evaluate_trees_torch_rowwise(desc_nodes, node_of, X, k)  # (C, N)
     assert got.shape == (C, N)
     for c in range(C):
         want = evaluate_trees_torch_per_sample(desc_nodes[node_of, c, :], X, k)
@@ -151,7 +151,7 @@ def test_evaluate_trees_torch_nodewise_matches_per_sample():
         )
 
 
-def test_evaluate_trees_triton_nodewise_matches_torch():
+def test_evaluate_trees_triton_rowwise_matches_torch():
     import numpy as np
     import pytest
     import torch
@@ -159,8 +159,8 @@ def test_evaluate_trees_triton_nodewise_matches_torch():
     if not torch.cuda.is_available():
         pytest.skip("CUDA required")
     from eml_boost._triton_exhaustive import (
-        evaluate_trees_torch_nodewise,
-        evaluate_trees_triton_nodewise,
+        evaluate_trees_torch_rowwise,
+        evaluate_trees_triton_rowwise,
         get_valid_descriptors_np,
     )
 
@@ -176,8 +176,8 @@ def test_evaluate_trees_triton_nodewise_matches_torch():
         rng.standard_normal((N, k)), dtype=torch.float32, device="cuda"
     )
 
-    got = evaluate_trees_triton_nodewise(desc_nodes, node_of, X, k)
-    want = evaluate_trees_torch_nodewise(desc_nodes, node_of, X, k)
+    got = evaluate_trees_triton_rowwise(desc_nodes, node_of, X, k)
+    want = evaluate_trees_torch_rowwise(desc_nodes, node_of, X, k)
     # exp(50)-scale values possible; rtol comparison handles magnitude.
     np.testing.assert_allclose(
         got.cpu().numpy(), want.cpu().numpy(), rtol=1e-3, atol=1e-4

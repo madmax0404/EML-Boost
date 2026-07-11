@@ -28,17 +28,24 @@ features, and thresholds match the node-wise engine exactly.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 
 from eml_boost._triton_exhaustive import (
-    evaluate_trees_triton_nodewise,
+    evaluate_trees_triton_rowwise,
     get_valid_descriptors_np,
 )
 from eml_boost.symbolic.snap import SnappedTree
 from eml_boost.tree_split._multinode_hist import multinode_histogram_split
 from eml_boost.tree_split._segmented import segment_topk_corr
 from eml_boost.tree_split.nodes import EmlSplit, InternalNode, Node, RawSplit
+
+if TYPE_CHECKING:
+    # _PendingLeaf lives in tree.py, which imports this module lazily; the
+    # TYPE_CHECKING guard keeps the annotation honest without a runtime cycle.
+    from eml_boost.tree_split.tree import _PendingLeaf
 
 
 class _Slot:
@@ -51,7 +58,9 @@ class _Slot:
         self.attach = attach
 
 
-def grow_levelwise(tree, indices: torch.Tensor, rng: np.random.Generator) -> Node:
+def grow_levelwise(
+    tree, indices: torch.Tensor, rng: np.random.Generator
+) -> Node | _PendingLeaf:
     device = tree._device
     X = tree._X_gpu
     y = tree._y_gpu
@@ -135,7 +144,7 @@ def grow_levelwise(tree, indices: torch.Tensor, rng: np.random.Generator) -> Nod
                 desc_a = valid_desc[draw]  # (A, C, 6) int32 numpy
                 desc_gpu = torch.tensor(desc_a, dtype=torch.int32, device=device)
                 Xk = X_a.gather(1, topk[seg_a])  # (Na, k)
-                eml = evaluate_trees_triton_nodewise(desc_gpu, seg_a, Xk, k_used)
+                eml = evaluate_trees_triton_rowwise(desc_gpu, seg_a, Xk, k_used)
                 # per-(slot, candidate) finiteness -> col_valid for EML cols
                 nonfinite = torch.zeros(A, C, device=device).index_add_(
                     0, seg_a, (~torch.isfinite(eml)).float().T

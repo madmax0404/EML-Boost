@@ -56,7 +56,9 @@ class EmlSplitBoostRegressor(BaseEstimator, RegressorMixin):
         statistically equivalent, not bit-identical: descriptor RNG is
         consumed in BFS order). Default "levelwise" as of Exp-19 (RMSE
         parity gates passed); "nodewise" is retained as the reference/
-        oracle engine.
+        oracle engine. levelwise executes on the GPU path only — with
+        use_gpu=False (or no CUDA) the CPU recursive grower runs regardless
+        of tree_growth.
     patience : int or None
         Early-stopping patience on an inner validation set. Set to None
         (or 0) to run the full `max_rounds`.

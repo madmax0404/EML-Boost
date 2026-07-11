@@ -1,18 +1,15 @@
-"""Single-tree MVP for elementary-split regression trees.
+"""Single-tree regression over elementary-split (EML) descriptors.
 
-Phase 1: exact greedy split-finding (no histogram yet) over the union of
-raw features and a sampled pool of EML expressions evaluated at each node.
-
-The split-finding algorithm:
-  1. Pick the top-k_eml raw features by absolute correlation with residual.
-  2. Sample n_eml_candidates descriptors uniformly from the non-constant
-     depth-2 tree space at k = k_eml.
-  3. Evaluate each descriptor on X[:, top_features] using the torch
-     evaluator. (Triton becomes relevant in Phase 2.)
-  4. Concatenate raw-feature columns and EML-candidate columns. For each
-     column, compute the best (threshold, gain) via exact sorted scan.
-  5. Keep the highest-gain split; partition and recurse until the tree
-     hits max_depth or the leaf-size threshold.
+Hosts ``EmlSplitTreeRegressor``, whose internal nodes split on raw features
+or randomly-sampled depth-2 EML expressions. Two GPU growth engines share
+one split semantics (per-node histograms, identical gain/partition rules):
+"levelwise" (default) grows a whole depth level breadth-first in GPU-batched
+passes with deterministic fixed-point histograms (see ``_levelwise.py``);
+"nodewise" is the recursive reference/oracle engine kept for validation.
+Leaf fitting is deferred during growth (nodes emit ``_PendingLeaf``) and
+resolved in one batched pass (``_leaf_batch.py``). With no CUDA (or
+``use_gpu=False``) a separate recursive exact/histogram CPU path grows the
+tree with constant leaves only.
 """
 
 from __future__ import annotations
@@ -79,6 +76,15 @@ class EmlSplitTreeRegressor:
         (default), the legacy binary accept/reject gate using
         ``leaf_eml_gain_threshold`` is used. See
         ``experiments/experiment9/report.md`` for why the default is False.
+    tree_growth : str
+        Growth engine: "nodewise" (recursive, the historical engine) or
+        "levelwise" (breadth-first batched — much faster on GPU;
+        statistically equivalent, not bit-identical: descriptor RNG is
+        consumed in BFS order). Default "levelwise" as of Exp-19 (RMSE
+        parity gates passed); "nodewise" is retained as the reference/
+        oracle engine. levelwise executes on the GPU path only — with
+        use_gpu=False (or no CUDA) the CPU recursive grower runs regardless
+        of tree_growth.
     random_state : int or None
         Seed for the sampler.
     """
@@ -296,9 +302,10 @@ class EmlSplitTreeRegressor:
 
     def _grow_gpu(
         self, indices: torch.Tensor, depth: int, rng: np.random.Generator,
-    ) -> Node:
+    ) -> Node | _PendingLeaf:
         """GPU-native version of `_grow`. `indices` is a long tensor on
-        `self._device`; recursion stays on GPU end-to-end."""
+        `self._device`; recursion stays on GPU end-to-end. Leaf sites emit
+        `_PendingLeaf` placeholders resolved later by `_finalize_leaves`."""
         n = int(indices.shape[0])
         if depth >= self.max_depth or n <= 2 * self.min_samples_leaf:
             return self._make_pending_leaf(indices)
@@ -324,7 +331,7 @@ class EmlSplitTreeRegressor:
         self._pending_leaves.append(p)
         return p
 
-    def _finalize_leaves(self, root: Node) -> Node:
+    def _finalize_leaves(self, root: Node | _PendingLeaf) -> Node:
         """Fit every _PendingLeaf collected during growth, then patch the
         tree. Reference path fits leaves one at a time via _fit_leaf in
         creation (DFS) order — identical calls to the pre-deferral code,
