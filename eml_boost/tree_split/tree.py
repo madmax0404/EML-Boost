@@ -101,6 +101,7 @@ class EmlSplitTreeRegressor:
         leaf_eml_cap_k: float = 2.0,
         leaf_l2: float = 1.0,                   # was 0.0; flipped to match XGBoost reg_lambda default
         use_stacked_blend: bool = False,
+        tree_growth: str = "nodewise",
         random_state: int | None = None,
     ):
         if eml_depth != 2:
@@ -127,6 +128,11 @@ class EmlSplitTreeRegressor:
             raise ValueError(f"leaf_l2 must be >= 0, got {leaf_l2}")
         self.leaf_l2 = float(leaf_l2)
         self.use_stacked_blend = use_stacked_blend
+        if tree_growth not in ("nodewise", "levelwise"):
+            raise ValueError(
+                f"tree_growth must be 'nodewise' or 'levelwise', got {tree_growth!r}"
+            )
+        self.tree_growth = tree_growth
         self.random_state = random_state
         self._gpu_tree = None
         self._gpu_tree_device = None
@@ -173,7 +179,12 @@ class EmlSplitTreeRegressor:
             indices_gpu = torch.arange(
                 len(X), dtype=torch.long, device=self._device,
             )
-            self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+            if self.tree_growth == "levelwise":
+                from eml_boost.tree_split._levelwise import grow_levelwise
+
+                self._root: Node = grow_levelwise(self, indices_gpu, rng)
+            else:
+                self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
             self._root = self._finalize_leaves(self._root)
             self._gpu_tree = self._tensorize_tree(self._root)
         else:
@@ -226,7 +237,12 @@ class EmlSplitTreeRegressor:
         self._global_std_gpu = std_gpu
 
         indices_gpu = torch.arange(n, dtype=torch.long, device=device)
-        self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
+        if self.tree_growth == "levelwise":
+            from eml_boost.tree_split._levelwise import grow_levelwise
+
+            self._root: Node = grow_levelwise(self, indices_gpu, rng)
+        else:
+            self._root: Node = self._grow_gpu(indices_gpu, depth=0, rng=rng)
         self._root = self._finalize_leaves(self._root)
         self._gpu_tree = self._tensorize_tree(self._root)
 
