@@ -21,6 +21,42 @@
 
 ---
 
+## Plan Amendment 1 (2026-07-11, during execution)
+
+**Finding (Task 2 implementer, verified):** the CURRENT node-wise GPU engine is
+run-to-run nondeterministic — `gpu_histogram_split`'s Triton kernel
+(`tl.atomic_add`) and torch fallback (`scatter_add_`) accumulate float32 in
+nondeterministic order; 1-ULP gain wobble flips near-tied split argmaxes and
+cascades (two same-seed fits of unmodified code: 419/500 predictions differ,
+max 5%). This breaks every cross-fit exactness gate in this plan (Task 2
+snapshot, Task 4 A/B, Task 8 structural oracle) and means same-seed
+experiment fits were never re-runnable.
+
+**Decision (user-approved):** build the deterministic fixed-point histogram
+core FIRST and route BOTH engines through it.
+
+- **NEW Task 2A** (brief: `.superpowers/sdd/task-2a-brief.md`): implements
+  `segment_minmax` (old Task 5 content), `_multinode_hist.py` (old Task 6
+  content, with tensor-scale quantization instead of a `.item()` sync), AND
+  rewires `gpu_histogram_split` in `_gpu_split.py` to call
+  `multinode_histogram_split` with one segment — the Triton float-atomic hist
+  kernel leaves the dispatch path (file and kernel tests remain). Adds a
+  run-to-run nodewise-fit determinism test. Accepted behavior change: node-wise
+  thresholds shift within fixed-point quantization tolerance (~2^-20 relative)
+  and node-wise loses the Triton hist speedup (~7% e2e on big data) — it is
+  becoming the test oracle.
+- **Tasks 5 and 6 are folded into Task 2A** — when reached, skip them (verify
+  their tests exist and pass, nothing more).
+- Task 8's no-EML structural oracle now compares two engines sharing ONE
+  histogram backend — the near-tie flakiness caveat in Task 8 Step 5 becomes
+  a hard bug signal instead of a triage case: identical quantized sums must
+  yield identical argmax decisions.
+- Task 2's snapshot test is unchanged but now valid (fits are reproducible).
+  It additionally serves as the determinism regression canary for the
+  node-wise engine.
+
+---
+
 ## File Structure
 
 | file | role | tasks |
