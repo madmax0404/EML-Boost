@@ -107,6 +107,26 @@ def test_gpu_histogram_split_dispatch_matches_torch_oracle():
 
 
 @requires_cuda
+def test_multinode_batched_equals_per_segment_calls():
+    """A multi-segment call must be bit-identical to S independent single-
+    segment calls — the property that makes the cross-engine structural
+    oracle exact (Plan Amendment 1)."""
+    from eml_boost.tree_split._multinode_hist import multinode_histogram_split
+
+    vals, y, seg, n_seg = _make(seed=5)
+    col_b, thr_b, gain_b = multinode_histogram_split(vals, y, seg, n_seg, 128, 1, 1.0)
+    for s in range(n_seg):
+        m = seg == s
+        zero = torch.zeros(int(m.sum()), dtype=torch.long, device="cuda")
+        col_s, thr_s, gain_s = multinode_histogram_split(
+            vals[m], y[m], zero, 1, 128, 1, 1.0
+        )
+        assert int(col_b[s]) == int(col_s[0])
+        assert torch.equal(thr_b[s], thr_s[0])
+        assert torch.equal(gain_b[s], gain_s[0])
+
+
+@requires_cuda
 def test_nodewise_fit_run_to_run_deterministic():
     """THE unblocking property: two same-seed GPU boost fits must now be
     byte-identical (was 419/500 predictions differing before the rewire).

@@ -29,9 +29,16 @@ def _friedman(n=3000, d=8, seed=0):
 def test_leaf_deferral_matches_snapshot():
     """Deferring leaf fits to post-growth must not change a single bit.
 
-    Snapshot captured pre-refactor (commit of Task 2 Step 2). Reference
-    (per-leaf) path pinned via _batched_leaves=False on every tree — done
-    here by patching the class default attribute.
+    Snapshot originally captured pre-refactor (commit of Task 2 Step 2) and
+    re-baselined in Task 8: the per-segment-scale + int64-cumsum fix to the
+    shared histogram core (which makes per-node gains batch-invariant so the
+    level-wise engine reproduces node-wise structure exactly) is a
+    deliberate, strictly-more-accurate change to node-wise split gains and
+    therefore shifts absolute fit output. The deferral-bit-exactness
+    invariant this test was created for is independently guarded by the
+    tolerance-based batched-vs-reference tests below. Reference (per-leaf)
+    path pinned via _batched_leaves=False on every tree — done here by
+    patching the class default attribute.
     """
     import eml_boost.tree_split.tree as tree_mod
 

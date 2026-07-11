@@ -12,11 +12,13 @@ which breaks same-seed reproducibility of fitted trees (1-ULP gain wobble
 flips near-tied argmax decisions and cascades). y and y**2 are therefore
 quantized to int64 fixed-point before scatter_add_ — integer addition is
 associative, so histogram totals are bit-identical regardless of row
-order. The quantization scale is 2**20 relative to global max|y| (max is
-order-independent), giving ~1e-6 relative error on bin sums — far below
+order. The quantization scale is 2**20 relative to each SEGMENT's own
+max|y| (amax is order-independent), so a single-segment call (node-wise
+dispatcher) and a multi-segment call (level-wise engine) yield
+bit-identical per-node sums, giving ~1e-6 relative error on bin sums — far below
 the O(1/n_bins) threshold-placement error inherent to histogram splitting.
-Implied bound: max|y| * n < ~2**43 to keep int64 exact (residuals in this
-project are far below that).
+Implied bound: max|y| * n < ~2**43 per segment to keep int64 exact
+(residuals in this project are far below that).
 
 Gain math (incl. leaf_l2 and min-leaf legality) mirrors
 `gpu_histogram_split_torch` line for line; see _gpu_split.py.
@@ -64,11 +66,19 @@ def multinode_histogram_split(
         ((values - vmin[seg_id]) / bin_width[seg_id]).long(), min=0, max=B - 1
     )  # (N, C)
 
-    # Fixed-point quantization (0-dim tensor scale: no host sync).
-    y_absmax = y.abs().max().clamp(min=1e-12)
-    scale = float(1 << _FP_BITS) / y_absmax  # 0-dim float32 tensor
-    y_q = torch.round(y * scale).to(torch.int64)
-    y2_q = torch.round((y * y) * scale).to(torch.int64)
+    # Fixed-point quantization with a PER-SEGMENT scale. A single-segment
+    # call (the node-wise dispatcher) and a multi-segment call (the level-
+    # wise engine) must produce bit-identical per-node histogram sums, so
+    # the scale must depend only on the segment's own rows — never on which
+    # other segments share the batch. amax is order-independent, so the
+    # scale itself is deterministic.
+    seg_absmax = torch.zeros(S, device=device).scatter_reduce_(
+        0, seg_id, y.abs(), reduce="amax", include_self=True
+    ).clamp(min=1e-12)                              # (S,)
+    scale = float(1 << _FP_BITS) / seg_absmax       # (S,)
+    row_scale = scale[seg_id]                       # (N,)
+    y_q = torch.round(y * row_scale).to(torch.int64)
+    y2_q = torch.round((y * y) * row_scale).to(torch.int64)
 
     col_offs = torch.arange(c, device=device) * B  # (C,)
     flat = (seg_id.unsqueeze(1) * (c * B) + col_offs + bin_idx).reshape(-1)
@@ -84,13 +94,19 @@ def multinode_histogram_split(
         0, flat, torch.ones(n * c, dtype=torch.int64, device=device)
     )
 
-    hist_sum = hist_sum.view(S, c, B).float() / scale
-    hist_sq = hist_sq.view(S, c, B).float() / scale
-    hist_cnt = hist_cnt.view(S, c, B).float()
-
-    c_sum = torch.cumsum(hist_sum, dim=2)
-    c_sq = torch.cumsum(hist_sq, dim=2)
-    c_cnt = torch.cumsum(hist_cnt, dim=2)
+    # Prefix-sum the histograms in int64 BEFORE dequantizing. Integer prefix
+    # sums are exact and order-independent, so a segment's cumulative bins
+    # are identical whether it is scanned alone (S=1 node-wise call) or
+    # inside a batch (S=A level-wise call). Float32 CUDA cumsum is NOT
+    # batch-invariant — it switches kernels by tensor size and perturbs the
+    # last ULP — which would desync the two engines' gains at quantization
+    # level and reintroduce the flaky-oracle failure this module exists to
+    # prevent. Dequantizing the already-summed integers keeps the entire
+    # gain computation batch-invariant (every op below is elementwise).
+    inv = (1.0 / scale).view(S, 1, 1)
+    c_sum = torch.cumsum(hist_sum.view(S, c, B), dim=2).float() * inv
+    c_sq = torch.cumsum(hist_sq.view(S, c, B), dim=2).float() * inv
+    c_cnt = torch.cumsum(hist_cnt.view(S, c, B), dim=2).float()
 
     total_sum = c_sum[:, :, -1:]
     total_sq = c_sq[:, :, -1:]
