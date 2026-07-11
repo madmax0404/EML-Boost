@@ -91,24 +91,28 @@ def grow_levelwise(tree, indices: torch.Tensor, rng: np.random.Generator) -> Nod
         offsets = np.zeros(L + 1, dtype=np.int64)
         np.cumsum(counts_np, out=offsets[1:])
 
-        # Leaf-vs-attempt decision per slot (pure CPU metadata).
-        attempt = []
-        for s in range(L):
-            n_s = int(counts_np[s])
-            if depth >= tree.max_depth or n_s <= 2 * msl:
-                tree_node = tree._make_pending_leaf(rows[offsets[s] : offsets[s + 1]])
-                slots[s].attach(tree_node)
-            else:
-                attempt.append(s)
-        if not attempt:
+        # Leaf-vs-attempt decision, vectorized in numpy (was a per-slot
+        # Python int()+if). A slot leafs at max depth or when it holds too
+        # few rows to yield two min-legal children; the rest attempt a split.
+        # np.nonzero returns ascending slot ids, so leaf creation order — and
+        # therefore each leaf's finalize segment — is identical to the loop.
+        if depth >= tree.max_depth:
+            is_leaf_np = np.ones(L, dtype=bool)
+        else:
+            is_leaf_np = counts_np <= 2 * msl
+        for s in np.nonzero(is_leaf_np)[0]:
+            s = int(s)
+            slots[s].attach(tree._make_pending_leaf(rows[offsets[s] : offsets[s + 1]]))
+        attempt = np.nonzero(~is_leaf_np)[0]  # ascending slot ids (int64)
+        A = int(attempt.shape[0])
+        if A == 0:
             break
 
-        # Compact the attempting slots to 0..A-1.
-        A = len(attempt)
+        # Compact the attempting slots to 0..A-1. attempt_t is built once and
+        # reused for the right-count gather below (was two torch.tensor calls).
+        attempt_t = torch.as_tensor(attempt, device=device)  # long
         remap = torch.full((L,), -1, dtype=torch.long, device=device)
-        remap[torch.tensor(attempt, dtype=torch.long, device=device)] = torch.arange(
-            A, dtype=torch.long, device=device
-        )
+        remap[attempt_t] = torch.arange(A, dtype=torch.long, device=device)
         keep = remap[seg] >= 0
         rows_a = rows[keep]
         seg_a = remap[seg[keep]]
@@ -161,7 +165,7 @@ def grow_levelwise(tree, indices: torch.Tensor, rng: np.random.Generator) -> Nod
         left_cnt = torch.zeros(A, device=device).index_add_(
             0, seg_a, go_left.float()
         )
-        right_cnt = counts[torch.tensor(attempt, device=device)].float() - left_cnt
+        right_cnt = counts[attempt_t].float() - left_cnt
 
         # ---- sync 2: level decisions ----
         dec = torch.cat(
@@ -179,6 +183,7 @@ def grow_levelwise(tree, indices: torch.Tensor, rng: np.random.Generator) -> Nod
         new_slots: list[_Slot] = []
         child_of = torch.full((A,), -1, dtype=torch.long, device=device)
         for a, s in enumerate(attempt):
+            s = int(s)
             sl = rows[offsets[s] : offsets[s + 1]]
             if gain_np[a] <= 0 or lcnt_np[a] < msl or rcnt_np[a] < msl:
                 slots[s].attach(tree._make_pending_leaf(sl))
