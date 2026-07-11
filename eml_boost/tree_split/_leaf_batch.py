@@ -183,45 +183,18 @@ def fit_leaves_batched(tree, pending) -> list[Node]:
                     )
                 )
 
-        # Reduction dtype for the OLS/val-SSE accumulations below (NOT the
-        # (T, Ne) Triton evaluation itself, which stays float32). A float32
-        # index_add_/dense-sum reduction here can disagree with reference's
-        # per-leaf dense .sum(dim=1) by ~1e-5-1e-6 relative purely from
-        # reduction order+primitive differences (confirmed: even matching
-        # reference's own row order, swapping .sum(dim=1) for a
-        # deterministic-mode index_add_ into one segment still moves the
-        # result). That is well inside the noise floor whenever two of the
-        # 144 candidate trees are genuinely near-tied on val-SSE -- common on
-        # real (tens-to-hundreds-of-row) leaves, not a rare edge case: an
-        # isolated repro flips the argmin between two DISTINCT (non-
-        # duplicate) candidates whose float64 ground-truth val-SSE gap is
-        # only ~2e-6 relative, deterministically and reproducibly every call
-        # -- a different failure mode than Task 3's exact-duplicate-
-        # descriptor tie (already fixed by the determinism scope above).
-        # Accumulating in float64 pushes the reduction's own noise floor to
-        # ~1e-15 relative, below observed near-tie gaps, without touching
-        # the evaluator or _fit_leaf. See Task 4 report for the isolation
-        # experiment.
-        acc_dtype = torch.float64
-
-        def _acc(fn, dtype=acc_dtype):
-            acc = torch.zeros(T, E, device=device, dtype=dtype)
+        def _acc(fn):
+            acc = torch.zeros(T, E, device=device)
             for preds, seg, yy, ff, vf, _s in preds_list:
-                acc.index_add_(1, seg, fn(preds, yy, ff, vf).to(dtype))
+                acc.index_add_(1, seg, fn(preds, yy, ff, vf))
             return acc
 
-        n_fit = torch.zeros(E, device=device, dtype=acc_dtype).index_add_(
-            0, seg_e, fit_f.to(acc_dtype)
-        )  # (E,)
+        n_fit = torch.zeros(E, device=device).index_add_(0, seg_e, fit_f)  # (E,)
         sum_p = _acc(lambda p, yy, ff, vf: p * ff)
         sum_p2 = _acc(lambda p, yy, ff, vf: p * p * ff)
         sum_py = _acc(lambda p, yy, ff, vf: p * (yy * ff).unsqueeze(0))
-        sum_y_f = torch.zeros(E, device=device, dtype=acc_dtype).index_add_(
-            0, seg_e, (y_e * fit_f).to(acc_dtype)
-        )
-        bad = _acc(
-            lambda p, yy, ff, vf: (~torch.isfinite(p)).float(), dtype=torch.float32
-        )  # any row (fit+val); a 0/1 count, float32 precision is plenty
+        sum_y_f = torch.zeros(E, device=device).index_add_(0, seg_e, y_e * fit_f)
+        bad = _acc(lambda p, yy, ff, vf: (~torch.isfinite(p)).float())  # any row (fit+val)
 
         # ---- closed-form OLS per (tree, leaf) — formulas verbatim from _fit_leaf ----
         n_fit_reg = n_fit + leaf_l2
@@ -248,27 +221,18 @@ def fit_leaves_batched(tree, pending) -> list[Node]:
         )  # (T, E)
 
         # ---- val SSE per (tree, leaf) with cap; constant val SSE per leaf ----
-        # Same float64-accumulation rationale as above: the accept/reject
-        # gate compares best_sse against const_sse * (1 - thr), a second
-        # near-tie-prone threshold decision (confirmed: this is the
-        # mechanism behind the EmlLeafNode/LeafNode type mismatches observed
-        # in the Task 4 integration test, not just terminal_choices flips).
-        val_sse = torch.zeros(T, E, device=device, dtype=acc_dtype)
-        const_sse = torch.zeros(E, device=device, dtype=acc_dtype)
+        val_sse = torch.zeros(T, E, device=device)
+        const_sse = torch.zeros(E, device=device)
         mean_full = (
-            torch.zeros(E, device=device, dtype=acc_dtype).index_add_(
-                0, seg_e, y_e.to(acc_dtype)
-            )
-            / torch.zeros(E, device=device, dtype=acc_dtype).index_add_(
-                0, seg_e, torch.ones_like(y_e, dtype=acc_dtype)
-            )
+            torch.zeros(E, device=device).index_add_(0, seg_e, y_e)
+            / torch.zeros(E, device=device).index_add_(0, seg_e, torch.ones_like(y_e))
         )
         for preds, seg, yy, _ff, vf, _s in preds_list:
-            vp = eta[:, seg] * preds.to(acc_dtype) + bias[:, seg]
-            vp = torch.clamp(vp, min=-cap[seg].to(acc_dtype), max=cap[seg].to(acc_dtype))
-            res = (yy.to(acc_dtype).unsqueeze(0) - vp) * vf.to(acc_dtype)
+            vp = eta[:, seg] * preds + bias[:, seg]
+            vp = torch.clamp(vp, min=-cap[seg], max=cap[seg])
+            res = (yy.unsqueeze(0) - vp) * vf
             val_sse.index_add_(1, seg, res * res)
-            cres = (yy.to(acc_dtype) - mean_full[seg]) * vf.to(acc_dtype)
+            cres = (yy - mean_full[seg]) * vf
             const_sse.index_add_(0, seg, cres * cres)
         val_sse = torch.where(valid, val_sse, torch.full_like(val_sse, float("inf")))
 

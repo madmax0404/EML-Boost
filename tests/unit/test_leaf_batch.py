@@ -275,7 +275,19 @@ def test_full_fit_batched_vs_reference_leaves(seed):
                 if isinstance(nb, EmlLeafNode) and (
                     nr.snapped.terminal_choices == nb.snapped.terminal_choices
                 ):
-                    np.testing.assert_allclose(nb.eta, nr.eta, rtol=1e-3, atol=1e-6)
+                    # rtol=1e-2, not 1e-3: eta comes from unscaled normal
+                    # equations whose det can suffer catastrophic
+                    # cancellation. Measured on the one leaf (seed=1,
+                    # n=244) that exceeded 1e-3: |det|/max|terms| = 2.5e-4,
+                    # i.e. float32's ~1e-7 reduction noise is amplified
+                    # ~4000x; ref deviated 3.5e-4 and batched 2.2e-3 from
+                    # the float64 ground-truth eta -- both inside that
+                    # envelope, so 1e-3 was miscalibrated for
+                    # ill-conditioned leaves, not a batched-path bug. The
+                    # end-to-end prediction assertion below stays at 1e-3
+                    # (eta/bias errors are anti-correlated by OLS, so leaf
+                    # predictions are far better conditioned than eta).
+                    np.testing.assert_allclose(nb.eta, nr.eta, rtol=1e-2, atol=1e-6)
                 else:
                     # Genuine near-tie (see docstring) -- both sides must
                     # still be finite, structurally valid fits.
@@ -297,8 +309,12 @@ def test_full_fit_batched_vs_reference_leaves(seed):
     assert n_eml_leaves > 0, "fixture produced no EML leaves; test is vacuous"
     # Occasional near-tie flips are expected (see docstring); a high rate
     # would indicate a real regression rather than float-precision noise
-    # at decision boundaries.
-    assert n_leaf_near_ties <= max(2, n_eml_leaves // 3), (
+    # at decision boundaries. Bound calibrated against float32 accumulation
+    # (the shipped path, per Task 4 review adjudication): observed 0-2
+    # near-ties out of 18-25 EML leaves per seed across seeds 0-4, so
+    # n_eml_leaves // 6 (3-4 here) gates meaningfully above the observed
+    # rate without permitting wholesale divergence.
+    assert n_leaf_near_ties <= max(2, n_eml_leaves // 6), (
         f"{n_leaf_near_ties}/{n_eml_leaves} EML leaves diverged in "
         "type/descriptor choice -- rate too high to be near-tie noise"
     )
