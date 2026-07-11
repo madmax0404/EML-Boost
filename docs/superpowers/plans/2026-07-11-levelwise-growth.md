@@ -2445,3 +2445,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - **Spec coverage:** Stage-1 mechanics → Tasks 1-4; Stage-2 pipeline → Tasks 5-9; determinism requirement → Task 6 (histograms) + Task 10 (acceptance); RNG/equivalence policy → Task 8 no-EML oracle + Task 9 parity band + Task 13 gates; benchmarks → Tasks 4, 11; validation run & rollout (incl. user checkpoint + default flip) → Tasks 12-13; nodewise retained as oracle → never removed. Memory-ceiling note → `_CHUNK_ROWS` in Task 3, small-tensor sizes documented in Task 6.
 - **Placeholder scan:** commit messages in Tasks 4 and 11 contain `<X.XX>`-style slots to be filled with MEASURED numbers at execution time — intentional (numbers cannot exist before the run); everything else is concrete.
 - **Type consistency:** `_PendingLeaf(indices, resolved)` (T2) consumed by T3/T8; `fit_leaves_batched(tree, pending) -> list[Node]` (T3) called in T2's `_finalize_leaves`; `segment_topk_corr` signature identical at T1 definition and T3/T8 call sites; `multinode_histogram_split` returns `(best_col, best_thr, best_gain)` consumed in that order in T8; `evaluate_trees_triton_nodewise(desc_nodes, node_of, X, k)` matches T7 definition at the T8 call site; `tree_growth` spelled identically in tree.py, ensemble.py, and tests.
+
+---
+
+## Plan Amendment 2 (2026-07-12, during execution)
+
+Exp-19 first run (idle box, user-confirmed): RMSE gates ALL PASS (win rate 73.5% in band;
+median 0.980 in band; 0 catastrophic; 0/34 datasets beyond noise; within-10% improved to
+94.1%). Timing gate FAIL: SB 173s / XGB 12s = 14.6x vs <=10x (SB suite speedup 4.0x,
+691->173s). Spec contingency invoked ("~15x => promote per-level hot spots"). Profile at
+n=3400: grow_levelwise Python 24%, hist 28%, leaf batch 17%, corr 11%, 37 syncs/round.
+
+- **NEW Task 14** (brief: `.superpowers/sdd/task-14-brief.md`): launch-consolidation pass
+  (fuse hist scatters, fuse corr scatters, trim per-slot Python, consolidate syncs) under
+  hard bit-exactness/determinism gates. Target <=18 ms/round on the profile workload.
+- Task 13 then resumes: fresh full Exp-19 re-run (delete experiment19 outputs; determinism
+  reproduces RMSEs, timings decide), gate re-check, report, flip-if-pass.
