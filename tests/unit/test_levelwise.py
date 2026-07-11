@@ -158,3 +158,21 @@ def test_tree_growth_param_validation_and_sklearn_roundtrip():
     m = EmlSplitBoostRegressor(tree_growth="levelwise")
     m2 = clone(m)
     assert m2.tree_growth == "levelwise"
+
+
+@requires_cuda
+@pytest.mark.parametrize("seed", [0, 7])
+def test_levelwise_same_seed_bitwise_deterministic(seed):
+    """Spec acceptance: two same-seed fits -> byte-identical predictions."""
+    X, y = _friedman(n=8000, seed=seed)
+
+    def _fit_predict():
+        m = EmlSplitBoostRegressor(
+            max_rounds=12, max_depth=8, patience=0, use_gpu=True,
+            random_state=seed, tree_growth="levelwise",
+        )
+        m.fit(X, y)
+        return m.predict(X[:2000])
+
+    p1, p2 = _fit_predict(), _fit_predict()
+    np.testing.assert_array_equal(p1, p2)
