@@ -176,3 +176,30 @@ def test_levelwise_same_seed_bitwise_deterministic(seed):
 
     p1, p2 = _fit_predict(), _fit_predict()
     np.testing.assert_array_equal(p1, p2)
+
+
+@requires_cuda
+def test_levelwise_speedup_over_nodewise():
+    """Conservative CI gate (expected ~5-10x; assert 3x to absorb noise)."""
+    import time
+
+    X, y = _friedman(n=32_000, d=10, seed=0)
+
+    def _time(growth):
+        m = EmlSplitBoostRegressor(
+            max_rounds=3, max_depth=8, patience=0, use_gpu=True,
+            random_state=0, tree_growth=growth,
+        )
+        m.fit(X, y)  # warmup (JIT, caches)
+        t0 = time.perf_counter()
+        m = EmlSplitBoostRegressor(
+            max_rounds=10, max_depth=8, patience=0, use_gpu=True,
+            random_state=0, tree_growth=growth,
+        )
+        m.fit(X, y)
+        torch.cuda.synchronize()
+        return time.perf_counter() - t0
+
+    t_node = _time("nodewise")
+    t_lvl = _time("levelwise")
+    assert t_lvl * 3.0 < t_node, f"levelwise {t_lvl:.2f}s vs nodewise {t_node:.2f}s"
