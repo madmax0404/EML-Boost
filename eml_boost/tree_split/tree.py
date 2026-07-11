@@ -133,8 +133,9 @@ class EmlSplitTreeRegressor:
         # Stage-1 (levelwise plan): leaf fits are deferred to _finalize_leaves.
         # False = per-leaf reference path (_fit_leaf); True = batched path
         # (_leaf_batch.fit_leaves_batched, Task 3). Not a constructor param:
-        # tests toggle the instance attribute directly.
-        self._batched_leaves = False
+        # tests toggle the instance attribute directly. Default True as of
+        # Task 4: batched finalize is the default for every GPU fit.
+        self._batched_leaves = True
         self._pending_leaves: list[_PendingLeaf] = []
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> EmlSplitTreeRegressor:
