@@ -488,7 +488,7 @@ def main() -> int:
     ax1.set_yscale("log")
     ax1.set_ylabel("SplitBoost RMSE / XGBoost RMSE (log)")
     ax1.set_title(
-        f"Experiment 18 (OpenML-CTR23): matched hyperparameters — "
+        f"Experiment 19 (OpenML-CTR23): levelwise parity, matched hyperparameters — "
         f"{n_within_10pct}/{n_total} within 10% of XGBoost, "
         f"{n_outright_wins}/{n_total} outright wins"
     )
